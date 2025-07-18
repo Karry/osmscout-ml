@@ -22,4 +22,5 @@ public:
 
 };
 
+using JunctionGraphProcessorRef = std::shared_ptr<JunctionGraphProcessor>;
 }
