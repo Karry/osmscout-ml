@@ -23,13 +23,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake g++ git
 
+      - name: Cache libosmscout build
+        uses: actions/cache@v4
+        with:
+          path: libosmscout/build
+          key: libosmscout-build-${{ hashFiles('libosmscout/**') }}
+          restore-keys: |
+            libosmscout-build-
+
       - name: Build and install libosmscout
         run: |
-          git clone --depth 1 https://github.com/Framstag/libosmscout.git
+          if [ ! -d libosmscout ]; then
+            git clone --depth 1 https://github.com/Framstag/libosmscout.git
+          fi
           cd libosmscout
-          mkdir build && cd build
+          mkdir -p build && cd build
           cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
-          cmake --build . --target install
+          sudo cmake --build . --target install
           cd ../..
 
       - name: Configure CMake
