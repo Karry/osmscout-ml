@@ -37,9 +37,11 @@ jobs:
             libosmscout-build-
 
       - name: Build and install libosmscout
-        run: |
-          ls -alh /opt/libosmscout/include
-          if [ ! -d /opt/libosmscout/ ] ; then
+        run: |          
+          if [ -d /opt/libosmscout/ ] ; then
+            echo "Using cached libosmscout build"
+            ls -alh /opt/libosmscout/include
+          else
             mkdir -p libosmscout-build && cd libosmscout-build
             cmake ../libosmscout -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/libosmscout/
             sudo cmake --build . --target install
