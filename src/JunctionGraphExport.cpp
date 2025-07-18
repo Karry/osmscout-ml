@@ -39,6 +39,8 @@
 #include <osmscout/util/Geometry.h>
 #include <osmscout/util/Time.h>
 
+#include <JunctionGraphProcessor.h>
+
 struct Arguments
 {
   bool                              help=false;
@@ -388,7 +390,8 @@ int main(int argc, char* argv[]) {
     std::make_shared<osmscout::RoutePostprocessor::DestinationPostprocessor>(),
     std::make_shared<osmscout::RoutePostprocessor::MaxSpeedPostprocessor>(),
     std::make_shared<osmscout::RoutePostprocessor::InstructionPostprocessor>(),
-    std::make_shared<osmscout::RoutePostprocessor::POIsPostprocessor>()
+    std::make_shared<osmscout::RoutePostprocessor::POIsPostprocessor>(),
+    std::make_shared<osmscout::JunctionGraphProcessor>(),
   };
 
   osmscout::RoutePostprocessor postprocessor;
