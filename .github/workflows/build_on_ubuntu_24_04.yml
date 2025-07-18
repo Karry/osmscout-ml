@@ -31,18 +31,20 @@ jobs:
       - name: Cache libosmscout build
         uses: actions/cache@v4
         with:
-          path: libosmscout-build
+          path: /opt/libosmscout/
           key: libosmscout-build-${{ hashFiles('libosmscout/**') }}
           restore-keys: |
             libosmscout-build-
 
       - name: Build and install libosmscout
         run: |
-          ls -alh libosmscout-build
-          mkdir -p libosmscout-build && cd libosmscout-build
-          cmake ../libosmscout -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
-          sudo cmake --build . --target install
-          cd ..
+          ls -alh /opt/libosmscout/include
+          if [ ! -d /opt/libosmscout/ ] ; then
+            mkdir -p libosmscout-build && cd libosmscout-build
+            cmake ../libosmscout -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/libosmscout/
+            sudo cmake --build . --target install
+            cd ..
+          fi
 
       - name: Configure CMake
         run: cmake -S . -B build
