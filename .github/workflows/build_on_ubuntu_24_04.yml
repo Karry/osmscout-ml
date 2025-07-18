@@ -38,6 +38,7 @@ jobs:
 
       - name: Build and install libosmscout
         run: |
+          ls -alh libosmscout-build
           mkdir -p libosmscout-build && cd libosmscout-build
           cmake ../libosmscout -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
           sudo cmake --build . --target install
