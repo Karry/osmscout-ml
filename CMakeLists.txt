@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OSMScoutML)
-find_package(libosmscout REQUIRED COMPONENTS OSMScout Map)
+find_package(libosmscout REQUIRED COMPONENTS OSMScout Map Client)
 
 set(SOURCE_FILES
     src/JunctionGraphExport.cpp
