@@ -19,24 +19,29 @@
 
 #pragma once
 
+#include <filesystem>
+
 #include <osmscout/routing/RoutePostprocessor.h>
 
 namespace osmscout {
 
 class JunctionGraphProcessor: public RoutePostprocessor::Postprocessor
 {
+private:
+  std::filesystem::path exportDirectory;
+
 public:
-    JunctionGraphProcessor() = default;
-    ~JunctionGraphProcessor() override = default;
+  JunctionGraphProcessor(const std::filesystem::path& exportDirectory);
+  ~JunctionGraphProcessor() override = default;
 
-    JunctionGraphProcessor(const JunctionGraphProcessor&) = delete;
-    JunctionGraphProcessor& operator=(const JunctionGraphProcessor&) = delete;
+  JunctionGraphProcessor(const JunctionGraphProcessor&) = delete;
+  JunctionGraphProcessor& operator=(const JunctionGraphProcessor&) = delete;
 
-    JunctionGraphProcessor(JunctionGraphProcessor&&) = delete;
-    JunctionGraphProcessor& operator=(JunctionGraphProcessor&&) = delete;
+  JunctionGraphProcessor(JunctionGraphProcessor&&) = delete;
+  JunctionGraphProcessor& operator=(JunctionGraphProcessor&&) = delete;
 
-    bool Process(const PostprocessorContext& context,
-                 RouteDescription& description) override;
+  bool Process(const PostprocessorContext& context,
+               RouteDescription& description) override;
 
 };
 
