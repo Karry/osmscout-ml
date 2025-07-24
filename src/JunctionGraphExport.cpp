@@ -18,14 +18,12 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 #include <chrono>
-#include <cmath>
 #include <cstring>
 #include <iostream>
-#include <iomanip>
 #include <list>
-#include <sstream>
 #include <fstream>
 #include <optional>
+#include <filesystem>
 
 #include <osmscout/db/Database.h>
 
@@ -37,7 +35,6 @@
 #include <osmscout/cli/CmdLineParsing.h>
 #include <osmscout/util/Bearing.h>
 #include <osmscout/util/Geometry.h>
-#include <osmscout/util/Time.h>
 
 #include <JunctionGraphProcessor.h>
 
@@ -48,6 +45,7 @@ struct Arguments
   osmscout::Vehicle                 vehicle=osmscout::Vehicle::vehicleCar;
   std::string                       gpx;
   std::string                       databaseDirectory;
+  std::filesystem::path             junctionExportDir=std::filesystem::current_path();
   osmscout::GeoCoord                start;
   std::vector<osmscout::GeoCoord>   via;
   osmscout::GeoCoord                target;
@@ -147,6 +145,13 @@ int main(int argc, char* argv[]) {
                       }),
                       "routeJson",
                       "Dump resulting route as JSON to file",
+                      false);
+
+  argParser.AddOption(osmscout::CmdLineStringOption([&args](const std::string& value) {
+                        args.junctionExportDir=value;
+                      }),
+                      "junctionExportDir",
+                      "Directory for exporting junction JSON files",
                       false);
 
   argParser.AddOption(osmscout::CmdLineFlag([&args](const bool& value) {
@@ -391,7 +396,7 @@ int main(int argc, char* argv[]) {
     std::make_shared<osmscout::RoutePostprocessor::MaxSpeedPostprocessor>(),
     std::make_shared<osmscout::RoutePostprocessor::InstructionPostprocessor>(),
     std::make_shared<osmscout::RoutePostprocessor::POIsPostprocessor>(),
-    std::make_shared<osmscout::JunctionGraphProcessor>(),
+    std::make_shared<osmscout::JunctionGraphProcessor>(args.junctionExportDir),
   };
 
   osmscout::RoutePostprocessor postprocessor;
