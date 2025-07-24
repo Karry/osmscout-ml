@@ -112,7 +112,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
        nodeIt != end;
        ++nodeIt) {
     auto& node = *nodeIt;
-    while (std::distance(nodeIt, junctionStart) > 1 &&
+    while (std::distance(junctionStart, nodeIt) > 1 &&
            SegmentLength(junctionStart, nodeIt) > Meters(50)) {
       assert(junctionStart != nodeIt);
       ++junctionStart;
@@ -131,8 +131,9 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
       auto prevNode = junctionStart;
       graph.nodes.push_back(CreateGraphNode(*prevNode));
       for (auto junctionNode = std::next(junctionStart);
-           junctionNode != end && distanceAhead < Meters(50) && node.GetPathObject().Valid();
+           junctionNode != end && distanceAhead < Meters(50) && junctionNode->GetPathObject().Valid();
            ++junctionNode) {
+        assert(prevNode!=junctionNode);
 
         // Create a graph node
         graph.nodes.push_back(CreateGraphNode(*junctionNode));
