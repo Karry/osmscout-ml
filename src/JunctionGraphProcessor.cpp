@@ -33,10 +33,15 @@ struct GraphNode {
   GeoCoord location;
 };
 
+namespace GraphFeature{
+constexpr std::string LANE_COUNT = "laneCount";
+}
+
 struct GraphEdge {
   Id fromNode;
   Id toNode;
   Distance length;
+  std::unordered_map<std::string, double> features;
 };
 
 struct Graph {
@@ -91,6 +96,20 @@ GraphNode CreateGraphNode(const RouteDescription::Node &node) {
     node.GetLocation()
   };
 }
+GraphEdge MakeEdge(const PostprocessorContext& context,
+                   const NodeIterator from,
+                   const NodeIterator to) {
+  GraphEdge edge{
+    from->GetLocation().GetId(),
+    to->GetLocation().GetId(),
+    GetSphericalDistance(from->GetLocation(), to->GetLocation())
+  };
+  if (auto laneDesc = std::dynamic_pointer_cast<RouteDescription::LaneDescription>(from->GetDescription(RouteDescription::LANES_DESC));
+      laneDesc && laneDesc->GetLaneCount() > 0) {
+    edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetLaneCount();
+  }
+  return edge;
+}
 } // anonymous namespace
 
 
@@ -139,10 +158,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         graph.nodes.push_back(CreateGraphNode(*junctionNode));
 
         // Create an edge to the junction start
-        GraphEdge edge;
-        edge.fromNode = prevNode->GetLocation().GetId();
-        edge.toNode = junctionNode->GetLocation().GetId();
-        edge.length = GetSphericalDistance(prevNode->GetLocation(), junctionNode->GetLocation());
+        GraphEdge edge=MakeEdge(context, prevNode, junctionNode);
         if (ahead) {
           distanceAhead += edge.length;
         } else if (junctionNode == nodeIt) {
