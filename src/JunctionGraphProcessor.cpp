@@ -104,7 +104,7 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
     to->GetLocation().GetId(),
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
-  if (auto laneDesc = std::dynamic_pointer_cast<RouteDescription::LaneDescription>(from->GetDescription(RouteDescription::LANES_DESC));
+  if (auto laneDesc = from->GetDescription<RouteDescription::LaneDescription>();
       laneDesc && laneDesc->GetLaneCount() > 0) {
     edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetLaneCount();
   }
@@ -137,10 +137,10 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
       ++junctionStart;
     }
 
-    if (node.HasDescription(RouteDescription::TURN_DESC) ||
-        node.HasDescription(RouteDescription::MOTORWAY_CHANGE_DESC) ||
-        node.HasDescription(RouteDescription::MOTORWAY_LEAVE_DESC) ||
-        node.HasDescription(RouteDescription::MOTORWAY_JUNCTION_DESC)
+    if (node.HasDescription<RouteDescription::TurnDescription>() ||
+        node.HasDescription<RouteDescription::MotorwayChangeDescription>() ||
+        node.HasDescription<RouteDescription::MotorwayLeaveDescription>() ||
+        node.HasDescription<RouteDescription::MotorwayJunctionDescription>()
         ) {
 
       // Fill the graph with nodes and edges
