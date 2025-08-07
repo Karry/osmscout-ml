@@ -35,6 +35,7 @@ struct GraphNode {
 
 namespace GraphFeature{
 constexpr std::string LANE_COUNT = "laneCount";
+constexpr std::string ANGLE = "angle";
 }
 
 struct GraphEdge {
@@ -67,11 +68,15 @@ struct Graph {
     // Export edges
     j["edges"] = nlohmann::json::array();
     for (const auto& edge : edges) {
-      j["edges"].push_back({
-        {"from", edge.fromNode},
-        {"to", edge.toNode},
-        {"length", edge.length.AsMeter()}
-      });
+      auto edgeObj=nlohmann::json::object({
+                                          {"from", edge.fromNode},
+                                          {"to", edge.toNode},
+                                          {"length", edge.length.AsMeter()}
+                                        });
+      for (const auto& feature : edge.features) {
+        edgeObj[feature.first] = feature.second;
+      }
+      j["edges"].push_back(edgeObj);
     }
     file << j.dump(2) << std::endl;
     file.close();
@@ -97,6 +102,7 @@ GraphNode CreateGraphNode(const RouteDescription::Node &node) {
   };
 }
 GraphEdge MakeEdge(const PostprocessorContext& context,
+                   const NodeIterator prev,
                    const NodeIterator from,
                    const NodeIterator to) {
   GraphEdge edge{
@@ -104,6 +110,13 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
     to->GetLocation().GetId(),
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
+  if (prev != from) {
+    double inBearing=GetSphericalBearingFinal(prev->GetLocation(),from->GetLocation()).AsDegrees();
+    double outBearing=GetSphericalBearingInitial(from->GetLocation(),to->GetLocation()).AsDegrees();
+
+    double turnAngle=NormalizeRelativeAngle(outBearing - inBearing);
+    edge.features[GraphFeature::ANGLE] = turnAngle;
+  }
   if (auto laneDesc = from->GetDescription<RouteDescription::LaneDescription>();
       laneDesc && laneDesc->GetLaneCount() > 0) {
     edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetLaneCount();
@@ -148,6 +161,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
       Distance distanceAhead;
       bool ahead = false;
       auto prevNode = junctionStart;
+      auto prevPrevNode = junctionStart;
       graph.nodes.push_back(CreateGraphNode(*prevNode));
       for (auto junctionNode = std::next(junctionStart);
            junctionNode != end && distanceAhead < Meters(50) && junctionNode->GetPathObject().Valid();
@@ -158,7 +172,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         graph.nodes.push_back(CreateGraphNode(*junctionNode));
 
         // Create an edge to the junction start
-        GraphEdge edge=MakeEdge(context, prevNode, junctionNode);
+        GraphEdge edge=MakeEdge(context, prevPrevNode, prevNode, junctionNode);
         if (ahead) {
           distanceAhead += edge.length;
         } else if (junctionNode == nodeIt) {
@@ -167,6 +181,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
 
         graph.edges.push_back(edge);
 
+        prevPrevNode = prevNode;
         prevNode = junctionNode;
       }
       if (!graph.edges.empty()) {
