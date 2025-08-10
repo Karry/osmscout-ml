@@ -36,6 +36,10 @@ struct GraphNode {
 namespace GraphFeature{
 constexpr std::string LANE_COUNT = "laneCount";
 constexpr std::string ANGLE = "angle";
+constexpr std::string ONEWAY = "oneway";
+constexpr std::string SUGGESTED_FROM = "suggestedFrom";
+constexpr std::string SUGGESTED_TO = "suggestedTo";
+constexpr std::string SUGGESTED_TURN = "suggestedTurn";
 }
 
 struct GraphEdge {
@@ -120,6 +124,20 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
   if (auto laneDesc = from->GetDescription<RouteDescription::LaneDescription>();
       laneDesc && laneDesc->GetLaneCount() > 0) {
     edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetLaneCount();
+    edge.features[GraphFeature::ONEWAY] = laneDesc->IsOneway() ? 1.0 : 0.0;
+    for (int i=0; i<laneDesc->GetLaneCount(); ++i) {
+      if (i < laneDesc->GetLaneTurns().size()) {
+        edge.features["laneTurn"+std::to_string(i)] = static_cast<double>(laneDesc->GetLaneTurns()[i]);
+      } else {
+        edge.features["laneTurn"+std::to_string(i)] = static_cast<double>(LaneTurn::Unknown);
+      }
+    }
+    if (auto suggestedLanes = from->GetDescription<RouteDescription::SuggestedLaneDescription>();
+        suggestedLanes) {
+      edge.features[GraphFeature::SUGGESTED_FROM] = static_cast<double>(suggestedLanes->GetFrom());
+      edge.features[GraphFeature::SUGGESTED_TO] = static_cast<double>(suggestedLanes->GetTo());
+      edge.features[GraphFeature::SUGGESTED_TURN] = static_cast<double>(suggestedLanes->GetTurn());
+    }
   }
   return edge;
 }
