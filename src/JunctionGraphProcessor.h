@@ -31,7 +31,7 @@ private:
   std::filesystem::path exportDirectory;
 
 public:
-  JunctionGraphProcessor(const std::filesystem::path& exportDirectory);
+  explicit JunctionGraphProcessor(const std::filesystem::path& exportDirectory);
   ~JunctionGraphProcessor() override = default;
 
   JunctionGraphProcessor(const JunctionGraphProcessor&) = delete;
