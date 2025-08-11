@@ -53,6 +53,8 @@ struct Graph {
   std::vector<GraphNode> nodes;
   std::vector<GraphEdge> edges;
 
+  std::set<Id> nodeIdSet;
+
   void Export(const std::filesystem::path &filePath) const {
     std::ofstream file(filePath);
     if (!file.is_open()) {
@@ -85,6 +87,15 @@ struct Graph {
     file << j.dump(2) << std::endl;
     file.close();
   }
+
+  bool InsertNode(GraphNode node) {
+    if (nodeIdSet.find(node.id) != nodeIdSet.end()) {
+      return false;
+    }
+    nodes.push_back(node);
+    nodeIdSet.insert(node.id);
+    return true;
+  }
 };
 
 namespace {
@@ -99,9 +110,9 @@ Distance SegmentLength(const NodeIterator start,
   return distance;
 }
 
-GraphNode CreateGraphNode(const RouteDescription::Node &node) {
+GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescription::Node &node) {
   return GraphNode{
-    node.GetLocation().GetId(),
+    context.GetNodeId(node),
     node.GetLocation()
   };
 }
@@ -110,8 +121,8 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
                    const NodeIterator from,
                    const NodeIterator to) {
   GraphEdge edge{
-    from->GetLocation().GetId(),
-    to->GetLocation().GetId(),
+    context.GetNodeId(*from),
+    context.GetNodeId(*to),
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
   if (prev != from) {
@@ -141,6 +152,39 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
   }
   return edge;
 }
+
+void TraverseWay(const PostprocessorContext &context,
+                 osmscout::Graph &graph,
+                 const WayRef &way,
+                 size_t id,
+                 int direction) {
+  assert(direction == -1 || direction == 1);
+  assert(way);
+  assert(id < way->nodes.size());
+
+  Distance distance;
+  for (size_t i = id;
+       i < way->nodes.size() && i >= 0 && (i+direction) < way->nodes.size() && (i+direction) >= 0;
+       i += direction) {
+
+    const auto &from = way->nodes[i];
+    const auto &to = way->nodes[i+direction];
+    graph.InsertNode(GraphNode{from.GetId(), from.GetCoord()});
+    graph.InsertNode(GraphNode{to.GetId(), to.GetCoord()});
+
+    auto edge = GraphEdge{
+      from.GetId(),
+      to.GetId(),
+      GetSphericalDistance(from.GetCoord(), to.GetCoord())
+    };
+    graph.edges.push_back(edge);
+    distance += edge.length;
+    if (distance > Meters(30)) {
+      break; // Stop if the distance exceeds 50 meters
+    }
+  }
+}
+
 } // anonymous namespace
 
 
@@ -178,29 +222,53 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
       Graph graph;
       Distance distanceAhead;
       bool ahead = false;
+      auto fromNode = junctionStart;
       auto prevNode = junctionStart;
-      auto prevPrevNode = junctionStart;
-      graph.nodes.push_back(CreateGraphNode(*prevNode));
-      for (auto junctionNode = std::next(junctionStart);
-           junctionNode != end && distanceAhead < Meters(50) && junctionNode->GetPathObject().Valid();
-           ++junctionNode) {
-        assert(prevNode!=junctionNode);
+      graph.nodes.push_back(CreateGraphNode(context, *fromNode));
+      for (auto toNode = std::next(junctionStart);
+           toNode != end && distanceAhead < Meters(50) && toNode->GetPathObject().Valid();
+           ++toNode) {
+        assert(fromNode != toNode);
 
         // Create a graph node
-        graph.nodes.push_back(CreateGraphNode(*junctionNode));
+        graph.InsertNode(CreateGraphNode(context, *toNode));
 
-        // Create an edge to the junction start
-        GraphEdge edge=MakeEdge(context, prevPrevNode, prevNode, junctionNode);
+        // Create an edge
+        GraphEdge edge=MakeEdge(context, prevNode, fromNode, toNode);
         if (ahead) {
           distanceAhead += edge.length;
-        } else if (junctionNode == nodeIt) {
+        } else if (toNode == nodeIt) {
           ahead = true;
         }
 
         graph.edges.push_back(edge);
 
-        prevPrevNode = prevNode;
-        prevNode = junctionNode;
+        for (const auto nodeExitRef: fromNode->GetObjects()){
+          if (!nodeExitRef.Valid() ||
+              !nodeExitRef.IsWay() ||
+              nodeExitRef == fromNode->GetPathObject() ||
+              nodeExitRef == prevNode->GetPathObject()) {
+            continue;
+          }
+          auto nodeExit = context.GetWay(DBFileOffset(fromNode->GetDatabaseId(), nodeExitRef.GetFileOffset()));
+          size_t intersectionId = std::numeric_limits<size_t>::max();
+          for (size_t i = 0; i < nodeExit->nodes.size(); ++i) {
+            if (nodeExit->nodes[i].GetId() == context.GetNodeId(*fromNode)) {
+              intersectionId = i;
+              break;
+            }
+          }
+          assert(intersectionId != std::numeric_limits<size_t>::max());
+          if (intersectionId > 0){
+            TraverseWay(context, graph, nodeExit, intersectionId, -1);
+          }
+          if (intersectionId +1 < nodeExit->nodes.size()) {
+            TraverseWay(context, graph, nodeExit, intersectionId, +1);
+          }
+        }
+
+        prevNode = fromNode;
+        fromNode = toNode;
       }
       if (!graph.edges.empty()) {
         auto junctionFileName = std::to_string(node.GetPathObject().GetFileOffset()) + "_" + std::to_string(node.GetCurrentNodeIndex()) + ".json";
@@ -214,5 +282,6 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
   }
   return true;
 }
+
 
 }
