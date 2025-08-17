@@ -40,6 +40,7 @@ constexpr std::string ONEWAY = "oneway";
 constexpr std::string SUGGESTED_FROM = "suggestedFrom";
 constexpr std::string SUGGESTED_TO = "suggestedTo";
 constexpr std::string SUGGESTED_TURN = "suggestedTurn";
+constexpr std::string ROUTE = "route";
 }
 
 struct GraphEdge {
@@ -125,6 +126,7 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
     context.GetNodeId(*to),
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
+  edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
   if (prev != from) {
     double inBearing=GetSphericalBearingFinal(prev->GetLocation(),from->GetLocation()).AsDegrees();
     double outBearing=GetSphericalBearingInitial(from->GetLocation(),to->GetLocation()).AsDegrees();
@@ -155,15 +157,21 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
 
 void TraverseWay(const PostprocessorContext &context,
                  osmscout::Graph &graph,
+                 DatabaseId dbId,
+                 const NodeIterator prev,
                  const WayRef &way,
                  size_t id,
                  int direction) {
   assert(direction == -1 || direction == 1);
   assert(way);
   assert(id < way->nodes.size());
+  assert(id < std::numeric_limits<int64_t>::max());
+
+  auto laneDesc = context.GetLaneReader(dbId).GetValue(way->GetFeatureValueBuffer());
+  auto accessDesc = context.GetAccessReader(dbId).GetValue(way->GetFeatureValueBuffer());
 
   Distance distance;
-  for (size_t i = id;
+  for (auto i = int64_t(id);
        i < way->nodes.size() && i >= 0 && (i+direction) < way->nodes.size() && (i+direction) >= 0;
        i += direction) {
 
@@ -177,6 +185,22 @@ void TraverseWay(const PostprocessorContext &context,
       to.GetId(),
       GetSphericalDistance(from.GetCoord(), to.GetCoord())
     };
+    edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
+    if (context.GetNodeId(*prev) != from.GetId()) {
+      double inBearing = GetSphericalBearingFinal(prev->GetLocation(), from.GetCoord()).AsDegrees();
+      double outBearing = GetSphericalBearingInitial(from.GetCoord(), to.GetCoord()).AsDegrees();
+      double turnAngle = NormalizeRelativeAngle(outBearing - inBearing);
+      edge.features[GraphFeature::ANGLE] = turnAngle;
+    }
+    if (laneDesc) {
+      edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetForwardLanes();
+      for (size_t j = 0; j < laneDesc->GetTurnForward().size(); ++j) {
+        edge.features["laneTurn" + std::to_string(j)] = static_cast<double>(laneDesc->GetTurnForward()[j]);
+      }
+    }
+    if (accessDesc) {
+      edge.features[GraphFeature::ONEWAY] = accessDesc->IsOneway() ? 1.0 : 0.0;
+    }
     graph.edges.push_back(edge);
     distance += edge.length;
     if (distance > Meters(30)) {
@@ -260,10 +284,10 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
           }
           assert(intersectionId != std::numeric_limits<size_t>::max());
           if (intersectionId > 0){
-            TraverseWay(context, graph, nodeExit, intersectionId, -1);
+            TraverseWay(context, graph, fromNode->GetDatabaseId(), prevNode, nodeExit, intersectionId, -1);
           }
           if (intersectionId +1 < nodeExit->nodes.size()) {
-            TraverseWay(context, graph, nodeExit, intersectionId, +1);
+            TraverseWay(context, graph, fromNode->GetDatabaseId(), prevNode, nodeExit, intersectionId, +1);
           }
         }
 
