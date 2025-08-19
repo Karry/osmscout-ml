@@ -41,6 +41,7 @@ constexpr std::string SUGGESTED_FROM = "suggestedFrom";
 constexpr std::string SUGGESTED_TO = "suggestedTo";
 constexpr std::string SUGGESTED_TURN = "suggestedTurn";
 constexpr std::string ROUTE = "route";
+constexpr std::string TYPE = "type";
 }
 
 struct GraphEdge {
@@ -117,6 +118,23 @@ GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescri
     node.GetLocation()
   };
 }
+
+int WayTypeId(const std::string& typeName) {
+  if (typeName == "highway_motorway")
+    return 0;
+  if (typeName == "highway_motorway_link")
+    return 1;
+  if (typeName == "highway_motorway_trunk")
+    return 2;
+  if (typeName == "highway_tertiary")
+    return 3;
+  if (typeName == "highway_trunk_link")
+    return 4;
+
+  log.Warn() << "Unknown way type: " << typeName;
+  return -1; // Unknown type
+}
+
 GraphEdge MakeEdge(const PostprocessorContext& context,
                    const NodeIterator prev,
                    const NodeIterator from,
@@ -127,6 +145,9 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
   edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
+  if (from->GetPathObject().IsWay()) {
+    edge.features[GraphFeature::TYPE] = WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
+  }
   if (prev != from) {
     double inBearing=GetSphericalBearingFinal(prev->GetLocation(),from->GetLocation()).AsDegrees();
     double outBearing=GetSphericalBearingInitial(from->GetLocation(),to->GetLocation()).AsDegrees();
@@ -186,6 +207,7 @@ void TraverseWay(const PostprocessorContext &context,
       GetSphericalDistance(from.GetCoord(), to.GetCoord())
     };
     edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
+    edge.features[GraphFeature::TYPE] = WayTypeId(way->GetType()->GetName());
     if (context.GetNodeId(*prev) != from.GetId()) {
       double inBearing = GetSphericalBearingFinal(prev->GetLocation(), from.GetCoord()).AsDegrees();
       double outBearing = GetSphericalBearingInitial(from.GetCoord(), to.GetCoord()).AsDegrees();
