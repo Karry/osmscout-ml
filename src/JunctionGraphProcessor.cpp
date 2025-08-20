@@ -40,8 +40,9 @@ constexpr std::string ONEWAY = "oneway";
 constexpr std::string SUGGESTED_FROM = "suggestedFrom";
 constexpr std::string SUGGESTED_TO = "suggestedTo";
 constexpr std::string SUGGESTED_TURN = "suggestedTurn";
-constexpr std::string ROUTE = "route";
+constexpr std::string ROUTE = "route"; // edge is part of the route
 constexpr std::string TYPE = "type";
+constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
 }
 
 struct GraphEdge {
@@ -145,6 +146,7 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
     GetSphericalDistance(from->GetLocation(), to->GetLocation())
   };
   edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
+  edge.features[GraphFeature::USABLE] = 1.0; // edge should be usable when it is part of the route
   if (from->GetPathObject().IsWay()) {
     edge.features[GraphFeature::TYPE] = WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
   }
@@ -208,6 +210,16 @@ void TraverseWay(const PostprocessorContext &context,
     };
     edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
     edge.features[GraphFeature::TYPE] = WayTypeId(way->GetType()->GetName());
+    if (direction < 0){
+      edge.features[GraphFeature::USABLE] = context.CanUseBackward(dbId,
+                                                                   way->GetId(id),
+                                                                   way->GetObjectFileRef());
+    } else {
+      edge.features[GraphFeature::USABLE] = context.CanUseForward(dbId,
+                                                                  way->GetId(id),
+                                                                  way->GetObjectFileRef());
+    }
+
     if (context.GetNodeId(*prev) != from.GetId()) {
       double inBearing = GetSphericalBearingFinal(prev->GetLocation(), from.GetCoord()).AsDegrees();
       double outBearing = GetSphericalBearingInitial(from.GetCoord(), to.GetCoord()).AsDegrees();
@@ -296,16 +308,14 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
               nodeExitRef == prevNode->GetPathObject()) {
             continue;
           }
+          Id fromNodeId = context.GetNodeId(*fromNode);
           auto nodeExit = context.GetWay(DBFileOffset(fromNode->GetDatabaseId(), nodeExitRef.GetFileOffset()));
-          size_t intersectionId = std::numeric_limits<size_t>::max();
-          for (size_t i = 0; i < nodeExit->nodes.size(); ++i) {
-            if (nodeExit->nodes[i].GetId() == context.GetNodeId(*fromNode)) {
-              intersectionId = i;
-              break;
-            }
-          }
-          assert(intersectionId != std::numeric_limits<size_t>::max());
-          if (intersectionId > 0){
+
+          size_t intersectionId;
+          [[maybe_unused]] bool found=nodeExit->GetNodeIndexByNodeId(fromNodeId, intersectionId);
+          assert(found);
+
+          if (intersectionId > 0) {
             TraverseWay(context, graph, fromNode->GetDatabaseId(), prevNode, nodeExit, intersectionId, -1);
           }
           if (intersectionId +1 < nodeExit->nodes.size()) {
