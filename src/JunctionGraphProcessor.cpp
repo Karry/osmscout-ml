@@ -121,16 +121,46 @@ GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescri
 }
 
 int WayTypeId(const std::string& typeName) {
-  if (typeName == "highway_motorway")
-    return 0;
-  if (typeName == "highway_motorway_link")
-    return 1;
-  if (typeName == "highway_motorway_trunk")
-    return 2;
-  if (typeName == "highway_tertiary")
-    return 3;
-  if (typeName == "highway_trunk_link")
-    return 4;
+  static const std::vector<std::string> wayTypes = {
+    "highway_motorway",
+    "highway_motorway_link",
+    "highway_motorway_trunk",
+    "highway_tertiary",
+    "highway_trunk_link",
+    "highway_residential",
+    "highway_secondary",
+    "highway_secondary_link",
+    "highway_service",
+    "highway_trunk",
+    "highway_primary",
+    "highway_primary_link",
+    "highway_footway",
+    "highway_track",
+    "highway_tertiary_link",
+    "highway_pedestrian",
+    "highway_path",
+    "highway_cycleway",
+    "highway_via_ferrata_easy",
+    "highway_via_ferrata_moderate",
+    "highway_via_ferrata_difficult",
+    "highway_via_ferrata_extreme",
+    "highway_bridleway",
+    "highway_steps",
+    "highway_services",
+    "highway_construction",
+    "highway_roundabout",
+    "highway_unclassified",
+    "highway_road",
+    "highway_living_street"
+  };
+
+  int index = 0;
+  for (const auto& wayType : wayTypes) {
+    if (wayType == typeName) {
+      return index;
+    }
+    index++;
+  }
 
   log.Warn() << "Unknown way type: " << typeName;
   return -1; // Unknown type
