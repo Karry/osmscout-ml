@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "junction-ml"
+version = "0.1.0"
+description = "ML model for predicting junction lane suggestions"
+authors = ["OSMScout ML"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12.0,<3.14.0"
+torch = "^2.8.0"
+torch-geometric = "^2.6.1"
+scikit-learn = "^1.3.0"
+numpy = "^1.24.0"
+pandas = "^2.0.0"
+matplotlib = "^3.7.0"
+seaborn = "^0.12.0"
+jupyter = "^1.0.0"
+tensorboard = "^2.13.0"
+tqdm = "^4.65.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+black = "^23.0.0"
+flake8 = "^6.0.0"
+mypy = "^1.5.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
