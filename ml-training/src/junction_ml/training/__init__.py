@@ -4,7 +4,7 @@ Training utilities and loops for junction lane prediction models.
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch_geometric.data import DataLoader
+from torch_geometric.data import DataLoader # type: ignore[import-untyped]
 from torch.utils.tensorboard import SummaryWriter
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
@@ -66,7 +66,7 @@ class MultiTaskLoss(nn.Module):
         Returns:
             Dictionary containing individual and total losses
         """
-        losses = {}
+        losses: dict[str, Any] = {}
         total_loss = 0.0
         
         tasks = ['suggested_from', 'suggested_to', 'suggested_turn']
@@ -151,14 +151,14 @@ class JunctionTrainer:
         self.epoch = 0
         self.best_val_loss = float('inf')
         self.patience_counter = 0
-        self.train_losses = []
-        self.val_losses = []
+        self.train_losses: list[Any] = []
+        self.val_losses: list[Any] = []
         
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch."""
         self.model.train()
-        epoch_losses = {'total_loss': [], 'suggested_from_loss': [], 
-                       'suggested_to_loss': [], 'suggested_turn_loss': []}
+        epoch_losses: dict[str, list[Any]] = {'total_loss': [], 'suggested_from_loss': [],
+                                              'suggested_to_loss': [], 'suggested_turn_loss': []}
         
         pbar = tqdm(self.train_loader, desc=f'Epoch {self.epoch} [Train]')
         
@@ -211,8 +211,8 @@ class JunctionTrainer:
     def validate_epoch(self) -> Dict[str, float]:
         """Validate for one epoch."""
         self.model.eval()
-        epoch_losses = {'total_loss': [], 'suggested_from_loss': [], 
-                       'suggested_to_loss': [], 'suggested_turn_loss': []}
+        epoch_losses: dict[str, list[Any]] = {'total_loss': [], 'suggested_from_loss': [],
+                                              'suggested_to_loss': [], 'suggested_turn_loss': []}
         
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f'Epoch {self.epoch} [Val]')
@@ -256,7 +256,7 @@ class JunctionTrainer:
         avg_losses = {key: np.mean(values) for key, values in epoch_losses.items() if values}
         return avg_losses
     
-    def save_checkpoint(self, is_best: bool = False):
+    def save_checkpoint(self, is_best: bool = False) -> None:
         """Save model checkpoint."""
         checkpoint = {
             'epoch': self.epoch,
@@ -275,7 +275,7 @@ class JunctionTrainer:
             torch.save(checkpoint, self.save_dir / 'best.pt')
             logger.info(f"Saved best model with validation loss: {self.best_val_loss:.4f}")
     
-    def load_checkpoint(self, checkpoint_path: str):
+    def load_checkpoint(self, checkpoint_path: str) -> None:
         """Load model checkpoint."""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
@@ -288,7 +288,7 @@ class JunctionTrainer:
         
         logger.info(f"Loaded checkpoint from epoch {self.epoch}")
     
-    def train(self, num_epochs: int):
+    def train(self, num_epochs: int) -> None:
         """
         Train the model for specified number of epochs.
         
@@ -352,7 +352,7 @@ def create_trainer(model: nn.Module,
                   weight_decay: float = 1e-5,
                   task_weights: Optional[Dict[str, float]] = None,
                   device: Optional[torch.device] = None,
-                  **trainer_kwargs) -> JunctionTrainer:
+                  **trainer_kwargs: Any) -> JunctionTrainer:
     """
     Create a trainer instance with default configurations.
     

@@ -4,9 +4,9 @@ PyTorch Geometric models for junction lane suggestion prediction.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GATConv, GraphConv, global_mean_pool, global_max_pool
-from torch_geometric.data import Data, Batch
-from typing import Dict, Optional, Tuple
+from torch_geometric.nn import GCNConv, GATConv, GraphConv, global_mean_pool, global_max_pool # type: ignore[import-untyped]
+from torch_geometric.data import Data, Batch # type: ignore[import-untyped]
+from typing import Dict, Optional, Tuple, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ class JunctionTransformer(nn.Module):
         }
 
 
-def create_model(model_type: str = 'gnn', **kwargs) -> nn.Module:
+def create_model(model_type: str = 'gnn', **kwargs: Any) -> nn.Module:
     """
     Create a model instance.
     

@@ -13,7 +13,7 @@ import json
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
+def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None) -> None:
     """
     Set up logging configuration.
     
@@ -31,7 +31,7 @@ def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
     )
 
 
-def set_seed(seed: int = 42):
+def set_seed(seed: int = 42) -> None:
     """
     Set random seeds for reproducibility.
     
@@ -59,7 +59,7 @@ def count_parameters(model: torch.nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def save_config(config: Dict[str, Any], save_path: str):
+def save_config(config: Dict[str, Any], save_path: str) -> None:
     """
     Save configuration to JSON file.
     
@@ -82,12 +82,12 @@ def load_config(config_path: str) -> Dict[str, Any]:
         Configuration dictionary
     """
     with open(config_path, 'r') as f:
-        return json.load(f)
+        return json.load(f) # type: ignore[no-any-return]
 
 
 def plot_training_curves(train_losses: List[Dict[str, float]], 
                         val_losses: List[Dict[str, float]],
-                        save_path: Optional[str] = None):
+                        save_path: Optional[str] = None) -> None:
     """
     Plot training and validation loss curves.
     
@@ -165,9 +165,9 @@ def evaluate_model(model: torch.nn.Module,
     """
     model.eval()
     
-    all_predictions = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
-    all_targets = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
-    all_valid = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
+    all_predictions: dict[str, list[Any]] = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
+    all_targets: dict[str, list[Any]] = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
+    all_valid: dict[str, list[Any]] = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
     
     with torch.no_grad():
         for batch in data_loader:
@@ -217,7 +217,7 @@ def visualize_predictions(model: torch.nn.Module,
                          data_loader: torch.utils.data.DataLoader,
                          device: torch.device,
                          num_samples: int = 100,
-                         save_path: Optional[str] = None):
+                         save_path: Optional[str] = None) -> None:
     """
     Visualize model predictions vs ground truth.
     
@@ -230,8 +230,8 @@ def visualize_predictions(model: torch.nn.Module,
     """
     model.eval()
     
-    predictions = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
-    targets = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
+    predictions: dict[str, list[Any]] = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
+    targets: dict[str, list[Any]] = {'suggested_from': [], 'suggested_to': [], 'suggested_turn': []}
     
     with torch.no_grad():
         for batch in data_loader:
@@ -286,7 +286,7 @@ def visualize_predictions(model: torch.nn.Module,
 class EarlyStopping:
     """Early stopping utility class."""
     
-    def __init__(self, patience: int = 10, min_delta: float = 0.0):
+    def __init__(self, patience: int = 10, min_delta: float = 0.0) -> None:
         """
         Initialize early stopping.
         
