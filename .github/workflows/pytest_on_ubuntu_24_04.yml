@@ -1,0 +1,43 @@
+name: Training tests on Ubuntu 24.04
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Update package list
+        run:  sudo apt-get update
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-poetry python-is-python3
+
+      - name: Cache poetry environment
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ hashFiles('ml-training/poetry.lock') }}
+          restore-keys: |
+            poetry-
+
+      - name: Set up Python environment for Training
+        run: |
+          cd ml-training
+          poetry install
+
+      - name: Run Training tests
+        run: |
+          cd ml-training
+          poetry run pytest
