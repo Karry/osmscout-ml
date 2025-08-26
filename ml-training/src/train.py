@@ -3,14 +3,14 @@ import argparse
 import random
 
 import torch
-from torch_geometric.data import DataLoader
+from torch_geometric.data import DataLoader # type: ignore[import-untyped]
 
 from junction_ml.data import JunctionGraphDataset
 from junction_ml.models import JunctionGNN
 from junction_ml.training import create_trainer
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train junction lane suggestion model.")
     parser.add_argument('--data-dir', type=str, default="../../tmp-junctions", help="Directory with junction graph JSON files")
     parser.add_argument('--log-dir', type=str, default="runs", help="Tensorboard log directory")
@@ -27,7 +27,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
     random.seed(args.seed)

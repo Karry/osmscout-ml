@@ -4,12 +4,12 @@ Data loading and preprocessing utilities for junction graphs.
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Callable
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Data, Dataset
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from torch_geometric.data import Data, Dataset # type: ignore[import-untyped]
+from sklearn.preprocessing import StandardScaler, LabelEncoder  # type: ignore[import-untyped]
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,9 @@ class JunctionGraphDataset(Dataset):
 
     def __init__(self,
                  data_dir: str = "../tmp-junctions",
-                 transform=None,
-                 pre_transform=None,
-                 pre_filter=None):
+                 transform: Optional[Callable] = None,
+                 pre_transform: Optional[Callable] = None,
+                 pre_filter: Optional[Callable] = None) -> None:
         """
         Initialize the dataset.
 
@@ -39,8 +39,8 @@ class JunctionGraphDataset(Dataset):
         """
         self.data_dir = Path(data_dir)
         self.feature_scaler = StandardScaler()
-        self.label_encoders = {}
-        self.feature_names = []
+        self.label_encoders: dict[str, Any] = {}
+        self.feature_names: list[str] = []
 
         super().__init__(str(self.data_dir), transform, pre_transform, pre_filter)
 
@@ -56,11 +56,11 @@ class JunctionGraphDataset(Dataset):
         """Get list of processed files."""
         return ['data.pt', 'feature_info.pt']
 
-    def download(self):
+    def download(self) -> None:
         """Download raw data (not needed as files already exist)."""
         pass
 
-    def process(self):
+    def process(self) -> None:
         """Process raw JSON files into PyTorch Geometric format."""
         logger.info(f"Processing {len(self.raw_file_names)} junction files...")
 
@@ -140,7 +140,7 @@ class JunctionGraphDataset(Dataset):
         # Edge indices and features
         edge_indices = []
         edge_features = []
-        edge_labels = {'suggestedFrom': [], 'suggestedTo': [], 'suggestedTurn': []}
+        edge_labels: dict[str, list[Any]] = {'suggestedFrom': [], 'suggestedTo': [], 'suggestedTurn': []}
 
         for edge in edges:
             from_idx = node_id_to_idx.get(edge['from'])
@@ -256,9 +256,11 @@ def create_train_val_test_split(dataset: JunctionGraphDataset,
     val_size = int(val_ratio * dataset_size)
     test_size = dataset_size - train_size - val_size
 
-    return torch.utils.data.random_split(
+    split: list[Dataset] = torch.utils.data.random_split(
         dataset, [train_size, val_size, test_size]
     )
+    assert len(split) == 3
+    return (split[0], split[1], split[2])
 
 
 def analyze_dataset_statistics(dataset: JunctionGraphDataset) -> Dict[str, Any]:
@@ -285,6 +287,9 @@ def analyze_dataset_statistics(dataset: JunctionGraphDataset) -> Dict[str, Any]:
 
     for i in range(len(dataset)):
         data = dataset[i]
+
+        assert type(stats['node_counts']) == list
+        assert type(stats['edge_counts']) == list
         stats['node_counts'].append(data.num_nodes)
         stats['edge_counts'].append(data.edge_index.size(1))
 
@@ -297,6 +302,8 @@ def analyze_dataset_statistics(dataset: JunctionGraphDataset) -> Dict[str, Any]:
         all_suggested_to.extend(valid_to.tolist())
         all_suggested_turn.extend(valid_turn.tolist())
 
+    assert type(stats['node_counts']) == list
+    assert type(stats['edge_counts']) == list
     stats['avg_nodes'] = np.mean(stats['node_counts'])
     stats['avg_edges'] = np.mean(stats['edge_counts'])
     stats['total_valid_labels'] = {
