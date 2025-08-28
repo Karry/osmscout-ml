@@ -205,13 +205,13 @@ class JunctionGraphDataset(Dataset):
     def len(self) -> int:
         """Get dataset length."""
         if not hasattr(self, '_data_list'):
-            self._data_list = torch.load(self.processed_paths[0])
+            self._data_list = torch.load(self.processed_paths[0], weights_only=False)
         return len(self._data_list)
 
     def get(self, idx: int) -> Data:
         """Get data object at index."""
         if not hasattr(self, '_data_list'):
-            self._data_list = torch.load(self.processed_paths[0])
+            self._data_list = torch.load(self.processed_paths[0], weights_only=False)
         return self._data_list[idx]
 
 
