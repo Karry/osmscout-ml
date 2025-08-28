@@ -12,7 +12,7 @@ from junction_ml.training import create_trainer
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train junction lane suggestion model.")
-    parser.add_argument('--data-dir', type=str, default="../../tmp-junctions", help="Directory with junction graph JSON files")
+    parser.add_argument('--data-dir', type=str, default="../tmp-junctions", help="Directory with junction graph JSON files")
     parser.add_argument('--log-dir', type=str, default="runs", help="Tensorboard log directory")
     parser.add_argument('--save-dir', type=str, default="checkpoints", help="Model checkpoint directory")
     parser.add_argument('--batch-size', type=int, default=32, help="Batch size")
