@@ -22,7 +22,26 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ git
+          sudo apt-get install -y cmake g++ git wget unzip
+
+      - name: Cache libtorch
+        uses: actions/cache@v4
+        with:
+          path: /opt/libtorch
+          key: libtorch-2.8.0
+          restore-keys: |
+            libtorch-
+
+      - name: Download and extract libtorch
+        run: |
+          if [ -d /opt/libtorch/ ] ; then
+              echo "Using cached libtorch"
+              ls -alh /opt/libtorch/
+          else
+              wget -q https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-2.8.0%2Bcpu.zip -O /tmp/libtorch.zip
+              unzip -q /tmp/libtorch.zip -d /opt/
+              rm /tmp/libtorch.zip
+          fi
 
       - name: Clone libosmscout repository
         run: |
@@ -49,7 +68,7 @@ jobs:
           fi
 
       - name: Configure CMake
-        run: cmake -S . -B build
+        run: cmake -DCMAKE_PREFIX_PATH=/opt/libtorch/ -S . -B build
 
       - name: Build
         run: cmake --build build -- -j$(nproc)
