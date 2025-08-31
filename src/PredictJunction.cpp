@@ -40,6 +40,7 @@
 
 // PyTorch++ includes
 #include <torch/torch.h>
+#include <torch/script.h>
 
 struct Arguments
 {
@@ -162,7 +163,7 @@ int main(int argc, char* argv[]) {
                       }),
                       "model",
                       "Path to PyTorch model file",
-                      true);
+                      false);
 
   argParser.AddOption(osmscout::CmdLineFlag([&args](const bool& value) {
                         args.debug=value;
@@ -266,16 +267,20 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  if (args.modelPath.empty()) {
+    std::cerr << "Error: Model is required!" << std::endl;
+    return 1;
+  }
+
   std::cout << "Model path: " << args.modelPath << std::endl;
 
-  // TODO: Load PyTorch model
-  // torch::jit::script::Module model;
-  // try {
-  //   model = torch::jit::load(args.modelPath);
-  // } catch (const std::exception& e) {
-  //   std::cerr << "Error loading model: " << e.what() << std::endl;
-  //   return 1;
-  // }
+  torch::jit::script::Module model;
+  try {
+    model = torch::jit::load(args.modelPath);
+  } catch (const std::exception& e) {
+    std::cerr << "Error loading model: " << e.what() << std::endl;
+    return 1;
+  }
 
   // TODO: Implement the rest of the junction prediction logic
   // This will include:
