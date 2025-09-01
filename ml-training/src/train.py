@@ -68,6 +68,9 @@ def main() -> None:
     # Train
     trainer.train(num_epochs=args.epochs)
 
+    # Save final TorchScript model
+    trainer.save_final_torchscript()
+
 
 if __name__ == "__main__":
     main()

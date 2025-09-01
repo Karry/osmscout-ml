@@ -273,8 +273,82 @@ class JunctionTrainer:
         # Save best checkpoint
         if is_best:
             torch.save(checkpoint, self.save_dir / 'best.pt')
+            # Also save as TorchScript
+            self.save_torchscript_model()
             logger.info(f"Saved best model with validation loss: {self.best_val_loss:.4f}")
     
+    def save_torchscript_model(self, filename: str = 'best_torchscript.pt') -> None:
+        """Save model in TorchScript format for inference."""
+        try:
+            # Import the wrapper class
+            from junction_ml.models import JunctionGNNTorchScript
+
+            # Set model to evaluation mode
+            self.model.eval()
+
+            # Create TorchScript-compatible wrapper
+            torchscript_wrapper = JunctionGNNTorchScript(self.model)
+            torchscript_wrapper.eval()
+
+            # Get a sample batch to extract tensor inputs
+            with torch.no_grad():
+                sample_batch = next(iter(self.val_loader))
+                sample_batch = sample_batch.to(self.device)
+
+                # Extract individual tensors
+                node_features = sample_batch.x
+                edge_index = sample_batch.edge_index
+                edge_features = sample_batch.edge_attr
+
+                # Trace the wrapper model with tensor inputs
+                traced_model = torch.jit.trace(
+                    torchscript_wrapper,
+                    (node_features, edge_index, edge_features)
+                )
+
+                # Save the traced model
+                torchscript_path = self.save_dir / filename
+                traced_model.save(str(torchscript_path))
+
+                logger.info(f"Saved TorchScript model to: {torchscript_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save TorchScript model with tracing: {e}")
+            logger.info("Falling back to scripting method...")
+
+            try:
+                # Try scripting the wrapper instead
+                from junction_ml.models import JunctionGNNTorchScript
+                torchscript_wrapper = JunctionGNNTorchScript(self.model)
+                torchscript_wrapper.eval()
+
+                scripted_model = torch.jit.script(torchscript_wrapper)
+                torchscript_path = self.save_dir / filename
+                scripted_model.save(str(torchscript_path))
+                logger.info(f"Saved TorchScript model (scripted) to: {torchscript_path}")
+
+            except Exception as script_e:
+                logger.error(f"Failed to save TorchScript model with both tracing and scripting: {script_e}")
+                # As a fallback, save just the state dict for manual loading
+                try:
+                    state_dict_path = self.save_dir / f"model_state_dict_{filename}"
+                    torch.save(self.model.state_dict(), state_dict_path)
+                    logger.info(f"Saved model state dict to: {state_dict_path}")
+                except Exception as fallback_e:
+                    logger.error(f"Failed to save even the state dict: {fallback_e}")
+
+    def save_final_torchscript(self) -> None:
+        """Save the final trained model in TorchScript format."""
+        # Load the best model first
+        best_checkpoint_path = self.save_dir / 'best.pt'
+        if best_checkpoint_path.exists():
+            checkpoint = torch.load(best_checkpoint_path, map_location=self.device, weights_only=False)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            logger.info("Loaded best model for TorchScript conversion")
+
+        # Save as TorchScript
+        self.save_torchscript_model('final_model.pt')
+
     def load_checkpoint(self, checkpoint_path: str) -> None:
         """Load model checkpoint."""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
