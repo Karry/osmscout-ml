@@ -278,3 +278,77 @@ def create_model(model_type: str = 'gnn', **kwargs: Any) -> nn.Module:
         return JunctionTransformer(**kwargs)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
+
+
+class JunctionGNNTorchScript(nn.Module):
+    """
+    TorchScript-compatible wrapper for JunctionGNN.
+
+    This wrapper takes individual tensors as input instead of PyTorch Geometric Data objects,
+    making it compatible with TorchScript tracing and scripting.
+    """
+
+    def __init__(self, junction_gnn: JunctionGNN):
+        """
+        Initialize the TorchScript wrapper.
+
+        Args:
+            junction_gnn: The original JunctionGNN model to wrap
+        """
+        super().__init__()
+        self.gnn = junction_gnn
+
+    def forward(self,
+                node_features: torch.Tensor,
+                edge_index: torch.Tensor,
+                edge_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        TorchScript-compatible forward pass.
+
+        Args:
+            node_features: Node features tensor [num_nodes, node_features]
+            edge_index: Edge connectivity tensor [2, num_edges]
+            edge_features: Edge features tensor [num_edges, edge_features]
+
+        Returns:
+            Tuple of (suggested_from, suggested_to, suggested_turn) predictions
+        """
+        x = node_features
+
+        # Node embeddings
+        x = self.gnn.node_embedding(x)
+        x = F.relu(x)
+
+        # Edge embeddings
+        edge_embed = None
+        if self.gnn.use_edge_attr and edge_features is not None:
+            edge_embed = self.gnn.edge_embedding(edge_features)
+            edge_embed = F.relu(edge_embed)
+
+        # Graph convolutions
+        for conv, norm in zip(self.gnn.convs, self.gnn.norms):
+            x_new = conv(x, edge_index)
+            x_new = norm(x_new)
+            x_new = F.relu(x_new)
+            x_new = F.dropout(x_new, p=self.gnn.dropout, training=self.training)
+            x = x + x_new  # Residual connection
+
+        # Edge-level predictions
+        row, col = edge_index[0], edge_index[1]
+
+        # Concatenate source and target node embeddings
+        edge_features_concat = torch.cat([x[row], x[col]], dim=1)
+
+        # Add edge embeddings if available
+        if edge_embed is not None:
+            edge_features_concat = torch.cat([edge_features_concat, edge_embed], dim=1)
+
+        # Edge prediction
+        edge_repr = self.gnn.edge_predictor(edge_features_concat)
+
+        # Multi-task predictions
+        suggested_from = self.gnn.suggested_from_head(edge_repr).squeeze(-1)
+        suggested_to = self.gnn.suggested_to_head(edge_repr).squeeze(-1)
+        suggested_turn = self.gnn.suggested_turn_head(edge_repr).squeeze(-1)
+
+        return suggested_from, suggested_to, suggested_turn
