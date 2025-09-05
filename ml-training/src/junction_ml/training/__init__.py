@@ -13,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 import json
+from junction_ml.models import JunctionGNN
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ class JunctionTrainer:
     """
     
     def __init__(self,
-                 model: nn.Module,
+                 model: JunctionGNN,
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  optimizer: optim.Optimizer,
@@ -129,7 +130,7 @@ class JunctionTrainer:
             save_dir: Directory for model checkpoints
             patience: Early stopping patience
         """
-        self.model = model
+        self.model: JunctionGNN = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.optimizer = optimizer
@@ -419,14 +420,14 @@ class JunctionTrainer:
         self.writer.close()
 
 
-def create_trainer(model: nn.Module,
-                  train_loader: DataLoader,
-                  val_loader: DataLoader,
-                  learning_rate: float = 1e-3,
-                  weight_decay: float = 1e-5,
-                  task_weights: Optional[Dict[str, float]] = None,
-                  device: Optional[torch.device] = None,
-                  **trainer_kwargs: Any) -> JunctionTrainer:
+def create_trainer(model: JunctionGNN,
+                   train_loader: DataLoader,
+                   val_loader: DataLoader,
+                   learning_rate: float = 1e-3,
+                   weight_decay: float = 1e-5,
+                   task_weights: Optional[Dict[str, float]] = None,
+                   device: Optional[torch.device] = None,
+                   **trainer_kwargs: Any) -> JunctionTrainer:
     """
     Create a trainer instance with default configurations.
     
