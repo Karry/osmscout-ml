@@ -38,6 +38,8 @@
 #include <osmscout/util/Geometry.h>
 
 #include <JunctionGraphProcessor.h>
+#include <ConsoleRoutingProgress.h>
+#include <RoutingUtils.h>
 
 struct Arguments
 {
@@ -52,61 +54,6 @@ struct Arguments
   osmscout::Distance                penaltySameType=osmscout::Meters(40);
   osmscout::Distance                penaltyDifferentType=osmscout::Meters(250);
   osmscout::HourDuration            maxPenalty=std::chrono::seconds(10);
-};
-
-static void GetCarSpeedTable(std::map<std::string,double>& map)
-{
-  map["highway_motorway"]=110.0;
-  map["highway_motorway_trunk"]=100.0;
-  map["highway_motorway_primary"]=70.0;
-  map["highway_motorway_link"]=60.0;
-  map["highway_motorway_junction"]=60.0;
-  map["highway_trunk"]=100.0;
-  map["highway_trunk_link"]=60.0;
-  map["highway_primary"]=70.0;
-  map["highway_primary_link"]=60.0;
-  map["highway_secondary"]=60.0;
-  map["highway_secondary_link"]=50.0;
-  map["highway_tertiary_link"]=55.0;
-  map["highway_tertiary"]=55.0;
-  map["highway_unclassified"]=50.0;
-  map["highway_road"]=50.0;
-  map["highway_residential"]=20.0;
-  map["highway_roundabout"]=40.0;
-  map["highway_living_street"]=10.0;
-  map["highway_service"]=30.0;
-}
-
-class ConsoleRoutingProgress : public osmscout::RoutingProgress
-{
-private:
-  std::chrono::system_clock::time_point lastDump=std::chrono::system_clock::now();
-  double                                maxPercent=0.0;
-
-public:
-  ConsoleRoutingProgress() = default;
-
-  void Reset() override
-  {
-    lastDump=std::chrono::system_clock::now();
-    maxPercent=0.0;
-  }
-
-  void Progress(const osmscout::Distance &currentMaxDistance,
-                const osmscout::Distance &overallDistance) override
-  {
-    double currentPercent=(currentMaxDistance.AsMeter()*100.0)/overallDistance.AsMeter();
-
-    std::chrono::system_clock::time_point now=std::chrono::system_clock::now();
-
-    maxPercent=std::max(maxPercent,currentPercent);
-
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now-lastDump).count()>500) {
-      std::cout << (size_t)maxPercent << "%" << std::endl;
-
-      lastDump=now;
-    }
-  }
 };
 
 // Function to get random routing nodes from the database bounds
