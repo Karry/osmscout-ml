@@ -28,78 +28,38 @@ namespace osmscout {
 
 using NodeIterator = std::list<RouteDescription::Node>::iterator;
 
-struct GraphNode {
-  Id id;
-  GeoCoord location;
-};
+void Graph::Export(const std::filesystem::path &filePath) const {
+  std::ofstream file(filePath);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file for writing: " + filePath.string());
+  }
 
-namespace GraphFeature{
-constexpr std::string LANE_COUNT = "laneCount";
-constexpr std::string ANGLE = "angle";
-constexpr std::string ONEWAY = "oneway";
-constexpr std::string SUGGESTED_FROM = "suggestedFrom";
-constexpr std::string SUGGESTED_TO = "suggestedTo";
-constexpr std::string SUGGESTED_TURN = "suggestedTurn";
-constexpr std::string ROUTE = "route"; // edge is part of the route
-constexpr std::string TYPE = "type";
-constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
+  nlohmann::json j;
+  // Export nodes
+  j["nodes"] = nlohmann::json::array();
+  for (const auto& node : nodes) {
+    j["nodes"].push_back({
+      {"id", node.id},
+      {"lat", node.location.GetLat()},
+      {"lon", node.location.GetLon()}
+    });
+  }
+  // Export edges
+  j["edges"] = nlohmann::json::array();
+  for (const auto& edge : edges) {
+    auto edgeObj=nlohmann::json::object({
+                                        {"from", edge.fromNode},
+                                        {"to", edge.toNode},
+                                        {"length", edge.length.AsMeter()}
+                                      });
+    for (const auto& feature : edge.features) {
+      edgeObj[feature.first] = feature.second;
+    }
+    j["edges"].push_back(edgeObj);
+  }
+  file << j.dump(2) << std::endl;
+  file.close();
 }
-
-struct GraphEdge {
-  Id fromNode;
-  Id toNode;
-  Distance length;
-  std::unordered_map<std::string, double> features;
-};
-
-struct Graph {
-  std::vector<GraphNode> nodes;
-  std::vector<GraphEdge> edges;
-
-  std::set<Id> nodeIdSet;
-
-  void Export(const std::filesystem::path &filePath) const {
-    std::ofstream file(filePath);
-    if (!file.is_open()) {
-      throw std::runtime_error("Failed to open file for writing: " + filePath.string());
-    }
-
-    nlohmann::json j;
-    // Export nodes
-    j["nodes"] = nlohmann::json::array();
-    for (const auto& node : nodes) {
-      j["nodes"].push_back({
-        {"id", node.id},
-        {"lat", node.location.GetLat()},
-        {"lon", node.location.GetLon()}
-      });
-    }
-    // Export edges
-    j["edges"] = nlohmann::json::array();
-    for (const auto& edge : edges) {
-      auto edgeObj=nlohmann::json::object({
-                                          {"from", edge.fromNode},
-                                          {"to", edge.toNode},
-                                          {"length", edge.length.AsMeter()}
-                                        });
-      for (const auto& feature : edge.features) {
-        edgeObj[feature.first] = feature.second;
-      }
-      j["edges"].push_back(edgeObj);
-    }
-    file << j.dump(2) << std::endl;
-    file.close();
-  }
-
-  bool InsertNode(GraphNode node) {
-    if (nodeIdSet.find(node.id) != nodeIdSet.end()) {
-      return false;
-    }
-    nodes.push_back(node);
-    nodeIdSet.insert(node.id);
-    return true;
-  }
-};
 
 namespace {
 Distance SegmentLength(const NodeIterator start,
@@ -276,13 +236,11 @@ void TraverseWay(const PostprocessorContext &context,
 } // anonymous namespace
 
 
-JunctionGraphProcessor::JunctionGraphProcessor(const std::filesystem::path& exportDirectory):
-  exportDirectory(exportDirectory)
+void JunctionGraphProcessor::ProcessJunctionGraph(const Graph &graph,
+                                                  const RouteDescription::Node &node)
 {
-  if (!std::filesystem::exists(exportDirectory)) {
-    std::filesystem::create_directories(exportDirectory);
-  }
-  log.Debug() << "Junction graph export directory: " << exportDirectory;
+  // Default implementation does nothing
+  // Override this method to implement custom processing of the junction graph
 }
 
 bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
@@ -357,11 +315,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         fromNode = toNode;
       }
       if (!graph.edges.empty()) {
-        auto junctionFileName = std::to_string(node.GetPathObject().GetFileOffset()) + "_" + std::to_string(node.GetCurrentNodeIndex()) + ".json";
-        log.Debug() << "Exporting junction graph for node "
-                    << node.GetPathObject().GetFileOffset() << "/" << node.GetCurrentNodeIndex()
-                    << " at " << node.GetLocation().GetDisplayText() << " to " << junctionFileName;
-        graph.Export(exportDirectory / junctionFileName);
+        ProcessJunctionGraph(graph, node);
       }
       junctionStart = nodeIt;
     }
@@ -369,5 +323,24 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
   return true;
 }
 
+JunctionGraphExportProcessor::JunctionGraphExportProcessor(const std::filesystem::path& exportDirectory):
+  JunctionGraphProcessor(),
+  exportDirectory(exportDirectory)
+{
+  if (!std::filesystem::exists(exportDirectory)) {
+    std::filesystem::create_directories(exportDirectory);
+  }
+  log.Debug() << "Junction graph export directory: " << exportDirectory;
+}
+
+void JunctionGraphExportProcessor::ProcessJunctionGraph(const Graph &graph,
+                                                        const RouteDescription::Node &node)
+{
+  auto junctionFileName = std::to_string(node.GetPathObject().GetFileOffset()) + "_" + std::to_string(node.GetCurrentNodeIndex()) + ".json";
+  log.Debug() << "Exporting junction graph for node "
+              << node.GetPathObject().GetFileOffset() << "/" << node.GetCurrentNodeIndex()
+              << " at " << node.GetLocation().GetDisplayText() << " to " << junctionFileName;
+  graph.Export(exportDirectory / junctionFileName);
+}
 
 }
