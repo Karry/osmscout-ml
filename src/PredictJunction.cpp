@@ -51,7 +51,6 @@ struct Arguments
   osmscout::Vehicle                 vehicle=osmscout::Vehicle::vehicleCar;
   std::string                       gpx;
   std::string                       databaseDirectory;
-  std::filesystem::path             junctionExportDir=std::filesystem::current_path();
   std::string                       modelPath;  // PyTorch model path
   osmscout::GeoCoord                start;
   std::vector<osmscout::GeoCoord>   via;
@@ -66,6 +65,39 @@ struct Arguments
   osmscout::Distance                penaltyDifferentType=osmscout::Meters(250);
   osmscout::HourDuration            maxPenalty=std::chrono::seconds(10);
 };
+
+namespace osmscout {
+class JunctionGraphPredictProcessor: public JunctionGraphProcessor {
+private:
+  torch::jit::script::Module model;
+public:
+  explicit JunctionGraphPredictProcessor(torch::jit::script::Module &&model);
+  ~JunctionGraphPredictProcessor() override = default;
+
+  JunctionGraphPredictProcessor(const JunctionGraphPredictProcessor&) = delete;
+  JunctionGraphPredictProcessor& operator=(const JunctionGraphPredictProcessor&) = delete;
+
+  JunctionGraphPredictProcessor(JunctionGraphPredictProcessor&&) = delete;
+  JunctionGraphPredictProcessor& operator=(JunctionGraphPredictProcessor&&) = delete;
+
+  void ProcessJunctionGraph(const Graph &graph,
+                            const RouteDescription::Node &node) override;
+};
+
+using JunctionGraphPredictProcessorRef = std::shared_ptr<JunctionGraphPredictProcessor>;
+
+JunctionGraphPredictProcessor::JunctionGraphPredictProcessor(torch::jit::script::Module &&model):
+  model(std::move(model))
+{
+}
+
+void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
+                                                         const RouteDescription::Node &node)
+{
+  std::cout << "TODO: Predict" << std::endl;
+}
+
+}
 
 int main(int argc, char* argv[]) {
   using namespace osmscout;
@@ -96,13 +128,6 @@ int main(int argc, char* argv[]) {
                       }),
                       "routeJson",
                       "Dump resulting route as JSON to file",
-                      false);
-
-  argParser.AddOption(osmscout::CmdLineStringOption([&args](const std::string& value) {
-                        args.junctionExportDir=value;
-                      }),
-                      "junctionExportDir",
-                      "Directory for exporting junction JSON files",
                       false);
 
   argParser.AddOption(osmscout::CmdLineStringOption([&args](const std::string& value) {
@@ -219,28 +244,53 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  std::cout << "Model path: " << args.modelPath << std::endl;
+  osmscout::log.Debug(args.debug);
+  osmscout::log.Info(true);
+  osmscout::log.Warn(true);
+  osmscout::log.Error(true);
+
+  osmscout::log.Info() << "Model path: " << args.modelPath;
 
   torch::jit::script::Module model;
   try {
     model = torch::jit::load(args.modelPath);
   } catch (const std::exception& e) {
-    std::cerr << "Error loading model: " << e.what() << std::endl;
+    osmscout::log.Error() << "Error loading model: " << e.what();
     return 1;
   }
 
-  // TODO: Implement the rest of the junction prediction logic
-  // This will include:
-  // 1. Database and routing setup (similar to JunctionGraphExport)
-  // 2. Route calculation
-  // 3. Junction detection along the route
-  // 4. Model inference for junction predictions
-  // 5. Output of predicted lane suggestions
+  osmscout::log.Info() << "Database: " << args.databaseDirectory;
+  osmscout::log.Info() << "Start: " << args.start.GetDisplayText();
+  osmscout::log.Info() << "Target: " << args.target.GetDisplayText();
 
-  std::cout << "PredictJunction utility - Implementation pending" << std::endl;
-  std::cout << "Database: " << args.databaseDirectory << std::endl;
-  std::cout << "Start: " << args.start.GetDisplayText() << std::endl;
-  std::cout << "Target: " << args.target.GetDisplayText() << std::endl;
+  std::list<osmscout::RoutePostprocessor::PostprocessorRef> postprocessors{
+    std::make_shared<osmscout::RoutePostprocessor::DistanceAndTimePostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::StartPostprocessor>("Start"),
+    std::make_shared<osmscout::RoutePostprocessor::TargetPostprocessor>("Target"),
+    std::make_shared<osmscout::RoutePostprocessor::WayNamePostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::WayTypePostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::CrossingWaysPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::DirectionPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::LanesPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::SuggestedLanesPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::MotorwayJunctionPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::DestinationPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::MaxSpeedPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::InstructionPostprocessor>(),
+    std::make_shared<osmscout::RoutePostprocessor::POIsPostprocessor>(),
+    std::make_shared<osmscout::JunctionGraphPredictProcessor>(std::move(model)),
+  };
 
-  return 0;
+  return ComputeRoute(args.databaseDirectory,
+                      postprocessors,
+                      args.start,
+                      args.target,
+                      args.via,
+                      args.penaltySameType,
+                      args.penaltyDifferentType,
+                      args.maxPenalty,
+                      args.router,
+                      args.vehicle,
+                      args.initialBearing,
+                      args.dataDebug);
 }

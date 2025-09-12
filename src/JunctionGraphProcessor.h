@@ -25,13 +25,53 @@
 
 namespace osmscout {
 
+struct GraphNode {
+  Id id;
+  GeoCoord location;
+};
+
+namespace GraphFeature{
+constexpr std::string LANE_COUNT = "laneCount";
+constexpr std::string ANGLE = "angle";
+constexpr std::string ONEWAY = "oneway";
+constexpr std::string SUGGESTED_FROM = "suggestedFrom";
+constexpr std::string SUGGESTED_TO = "suggestedTo";
+constexpr std::string SUGGESTED_TURN = "suggestedTurn";
+constexpr std::string ROUTE = "route"; // edge is part of the route
+constexpr std::string TYPE = "type";
+constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
+}
+
+struct GraphEdge {
+  Id fromNode;
+  Id toNode;
+  Distance length;
+  std::unordered_map<std::string, double> features;
+};
+
+struct Graph {
+  std::vector<GraphNode> nodes;
+  std::vector<GraphEdge> edges;
+
+  std::set<Id> nodeIdSet;
+
+  void Export(const std::filesystem::path &filePath) const;
+
+  inline bool InsertNode(GraphNode node) {
+    if (nodeIdSet.find(node.id) != nodeIdSet.end()) {
+      return false;
+    }
+    nodes.push_back(node);
+    nodeIdSet.insert(node.id);
+    return true;
+  }
+};
+
+
 class JunctionGraphProcessor: public RoutePostprocessor::Postprocessor
 {
-private:
-  std::filesystem::path exportDirectory;
-
 public:
-  explicit JunctionGraphProcessor(const std::filesystem::path& exportDirectory);
+  JunctionGraphProcessor() = default;
   ~JunctionGraphProcessor() override = default;
 
   JunctionGraphProcessor(const JunctionGraphProcessor&) = delete;
@@ -43,7 +83,29 @@ public:
   bool Process(const PostprocessorContext& context,
                RouteDescription& description) override;
 
+  virtual void ProcessJunctionGraph(const Graph &graph,
+                                    const RouteDescription::Node &node);
+
 };
 
-using JunctionGraphProcessorRef = std::shared_ptr<JunctionGraphProcessor>;
+class JunctionGraphExportProcessor: public JunctionGraphProcessor {
+private:
+  std::filesystem::path exportDirectory;
+
+public:
+  explicit JunctionGraphExportProcessor(const std::filesystem::path& exportDirectory);
+  ~JunctionGraphExportProcessor() override = default;
+
+  JunctionGraphExportProcessor(const JunctionGraphExportProcessor&) = delete;
+  JunctionGraphExportProcessor& operator=(const JunctionGraphExportProcessor&) = delete;
+
+  JunctionGraphExportProcessor(JunctionGraphExportProcessor&&) = delete;
+  JunctionGraphExportProcessor& operator=(JunctionGraphExportProcessor&&) = delete;
+
+  void ProcessJunctionGraph(const Graph &graph,
+                            const RouteDescription::Node &node) override;
+};
+
+using JunctionGraphExportProcessorRef = std::shared_ptr<JunctionGraphExportProcessor>;
+
 }

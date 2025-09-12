@@ -14,6 +14,9 @@ endif()
 
 set(ROUTING_UTILS_SOURCE_FILES
     src/RoutingUtils.cpp
+    src/RoutingUtils.h
+    src/JunctionGraphProcessor.cpp
+    src/JunctionGraphProcessor.h
 )
 add_library(RoutingUtils ${ROUTING_UTILS_SOURCE_FILES})
 target_include_directories(RoutingUtils PRIVATE src)
@@ -23,8 +26,6 @@ target_link_libraries(RoutingUtils PRIVATE OSMScout::OSMScout)
 
 set(JUNCTION_EXPORT_SOURCE_FILES
     src/JunctionGraphExport.cpp
-    src/JunctionGraphProcessor.cpp
-    src/JunctionGraphProcessor.h
 )
 add_executable(JunctionGraphExport ${JUNCTION_EXPORT_SOURCE_FILES})
 target_include_directories(JunctionGraphExport PRIVATE src)
@@ -34,8 +35,6 @@ target_link_libraries(JunctionGraphExport PRIVATE OSMScout::OSMScout RoutingUtil
 
 set(RANDOM_EXPORT_SOURCE_FILES
     src/RandomJunctionGraphExport.cpp
-    src/JunctionGraphProcessor.cpp
-    src/JunctionGraphProcessor.h
 )
 add_executable(RandomJunctionGraphExport ${RANDOM_EXPORT_SOURCE_FILES})
 target_include_directories(RandomJunctionGraphExport PRIVATE src)
@@ -45,8 +44,6 @@ target_link_libraries(RandomJunctionGraphExport PRIVATE OSMScout::OSMScout Routi
 if(Torch_FOUND)
     set(PREDICT_JUNCTION_SOURCE_FILES
         src/PredictJunction.cpp
-        src/JunctionGraphProcessor.cpp
-        src/JunctionGraphProcessor.h
     )
     add_executable(PredictJunction ${PREDICT_JUNCTION_SOURCE_FILES})
     target_include_directories(PredictJunction PRIVATE src)
