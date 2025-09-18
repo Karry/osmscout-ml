@@ -24,6 +24,8 @@
 #include <fstream>
 #include <optional>
 #include <filesystem>
+#include <iomanip>
+#include <unordered_map>
 
 #include <osmscout/db/Database.h>
 
@@ -94,7 +96,175 @@ JunctionGraphPredictProcessor::JunctionGraphPredictProcessor(torch::jit::script:
 void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
                                                          const RouteDescription::Node &node)
 {
-  std::cout << "TODO: Predict" << std::endl;
+  // Check if we have any nodes and edges in the graph
+  if (graph.nodes.empty() || graph.edges.empty()) {
+    std::cout << "Empty graph - skipping prediction" << std::endl;
+    return;
+  }
+
+  std::cout << "=== Junction Graph Prediction ===" << std::endl;
+  std::cout << "Nodes: " << graph.nodes.size() << ", Edges: " << graph.edges.size() << std::endl;
+
+  try {
+    // Create node ID to index mapping for PyTorch tensor indexing
+    std::unordered_map<Id, int> nodeIdToIndex;
+    for (size_t i = 0; i < graph.nodes.size(); ++i) {
+      nodeIdToIndex[graph.nodes[i].id] = static_cast<int>(i);
+    }
+
+    // Prepare node features (lat, lon coordinates)
+    std::vector<std::vector<float>> nodeFeatures;
+    for (const auto& graphNode : graph.nodes) {
+      nodeFeatures.push_back({
+        static_cast<float>(graphNode.location.GetLat()),
+        static_cast<float>(graphNode.location.GetLon())
+      });
+    }
+
+    // Prepare edge indices and features
+    std::vector<std::vector<int64_t>> edgeIndices;
+    std::vector<std::vector<float>> edgeFeatures;
+
+    for (const auto& edge : graph.edges) {
+      // Get node indices for this edge
+      auto fromIt = nodeIdToIndex.find(edge.fromNode);
+      auto toIt = nodeIdToIndex.find(edge.toNode);
+
+      // check that Edge references known node
+      assert(fromIt != nodeIdToIndex.end() && toIt != nodeIdToIndex.end());
+
+      // Add edge indices (from_node, to_node)
+      edgeIndices.push_back({static_cast<int64_t>(fromIt->second), static_cast<int64_t>(toIt->second)});
+
+      // Extract edge features in the same order as the Python model expects:
+      // [length, laneCount, angle, oneway, route, type, laneTurn0-9]
+      std::vector<float> features;
+
+      // Basic features
+      features.push_back(static_cast<float>(edge.length.AsMeter())); // length
+      features.push_back(static_cast<float>(edge.features.count(GraphFeature::LANE_COUNT) ?
+                                           edge.features.at(GraphFeature::LANE_COUNT) : 0.0)); // laneCount
+      features.push_back(static_cast<float>(edge.features.count(GraphFeature::ANGLE) ?
+                                           edge.features.at(GraphFeature::ANGLE) : 0.0)); // angle
+      features.push_back(static_cast<float>(edge.features.count(GraphFeature::ONEWAY) ?
+                                           edge.features.at(GraphFeature::ONEWAY) : 0.0)); // oneway
+      features.push_back(static_cast<float>(edge.features.count(GraphFeature::ROUTE) ?
+                                           edge.features.at(GraphFeature::ROUTE) : 0.0)); // route
+      features.push_back(static_cast<float>(edge.features.count(GraphFeature::TYPE) ?
+                                           edge.features.at(GraphFeature::TYPE) : -1.0)); // type
+
+      // Lane turn features (up to 10 lanes, as expected by the model)
+      for (int i = 0; i < 10; ++i) {
+        std::string laneTurnKey = "laneTurn" + std::to_string(i);
+        features.push_back(static_cast<float>(edge.features.count(laneTurnKey) ?
+                                             edge.features.at(laneTurnKey) : -1.0));
+      }
+
+      edgeFeatures.push_back(features);
+    }
+
+    if (edgeIndices.empty()) {
+      std::cout << "No valid edges found for prediction" << std::endl;
+      return;
+    }
+
+    // Convert to PyTorch tensors
+    // Node features tensor [num_nodes, 2]
+    torch::Tensor nodeTensor = torch::zeros({static_cast<int64_t>(nodeFeatures.size()), 2});
+    for (size_t i = 0; i < nodeFeatures.size(); ++i) {
+      nodeTensor[i][0] = nodeFeatures[i][0]; // lat
+      nodeTensor[i][1] = nodeFeatures[i][1]; // lon
+    }
+
+    // Edge index tensor [2, num_edges] - PyTorch Geometric format
+    torch::Tensor edgeIndexTensor = torch::zeros({2, static_cast<int64_t>(edgeIndices.size())}, torch::kInt64);
+    for (size_t i = 0; i < edgeIndices.size(); ++i) {
+      edgeIndexTensor[0][i] = edgeIndices[i][0]; // from_node
+      edgeIndexTensor[1][i] = edgeIndices[i][1]; // to_node
+    }
+
+    // Edge attributes tensor [num_edges, 16]
+    torch::Tensor edgeAttrTensor = torch::zeros({static_cast<int64_t>(edgeFeatures.size()), 16});
+    for (size_t i = 0; i < edgeFeatures.size(); ++i) {
+      for (size_t j = 0; j < edgeFeatures[i].size() && j < 16; ++j) {
+        edgeAttrTensor[i][j] = edgeFeatures[i][j];
+      }
+    }
+
+    // Create input arguments for the model (individual tensors, not dictionary)
+    std::vector<torch::jit::IValue> inputs;
+    inputs.push_back(nodeTensor);          // node_features
+    inputs.push_back(edgeIndexTensor);     // edge_index
+    inputs.push_back(edgeAttrTensor);      // edge_features
+
+    // Run model inference
+    std::cout << "Running model inference..." << std::endl;
+    torch::jit::IValue output = model.forward(inputs);
+
+    // Extract predictions from output tuple (not dictionary)
+    auto outputTuple = output.toTuple();
+    torch::Tensor suggestedFromPred = outputTuple->elements()[0].toTensor();
+    torch::Tensor suggestedToPred = outputTuple->elements()[1].toTensor();
+    torch::Tensor suggestedTurnPred = outputTuple->elements()[2].toTensor();
+
+    // Apply sigmoid to get probabilities for binary predictions
+    suggestedFromPred = torch::sigmoid(suggestedFromPred);
+    suggestedToPred = torch::sigmoid(suggestedToPred);
+    // suggestedTurn might be a regression output, so we don't apply sigmoid
+
+    // Print predictions alongside heuristic suggestions for each edge
+    std::cout << "\n=== Edge Predictions vs Heuristics ===" << std::endl;
+    for (size_t i = 0; i < graph.edges.size() && i < edgeIndices.size(); ++i) {
+      const auto& edge = graph.edges[i];
+
+      std::cout << "\nEdge " << i << " (from " << edge.fromNode << " to " << edge.toNode << "):" << std::endl;
+
+      // Print model predictions
+      float predFrom = suggestedFromPred[i].item<float>();
+      float predTo = suggestedToPred[i].item<float>();
+      float predTurn = suggestedTurnPred[i].item<float>();
+
+      std::cout << "  Model Predictions:" << std::endl;
+      std::cout << "    suggestedFrom: " << std::fixed << std::setprecision(3) << predFrom << std::endl;
+      std::cout << "    suggestedTo:   " << std::fixed << std::setprecision(3) << predTo << std::endl;
+      std::cout << "    suggestedTurn: " << std::fixed << std::setprecision(3) << predTurn << std::endl;
+
+      // Print heuristic suggestions (if available)
+      std::cout << "  Heuristic Values:" << std::endl;
+      if (edge.features.count(GraphFeature::SUGGESTED_FROM)) {
+        std::cout << "    suggestedFrom: " << edge.features.at(GraphFeature::SUGGESTED_FROM) << std::endl;
+      } else {
+        std::cout << "    suggestedFrom: (not available)" << std::endl;
+      }
+
+      if (edge.features.count(GraphFeature::SUGGESTED_TO)) {
+        std::cout << "    suggestedTo:   " << edge.features.at(GraphFeature::SUGGESTED_TO) << std::endl;
+      } else {
+        std::cout << "    suggestedTo:   (not available)" << std::endl;
+      }
+
+      if (edge.features.count(GraphFeature::SUGGESTED_TURN)) {
+        std::cout << "    suggestedTurn: " << edge.features.at(GraphFeature::SUGGESTED_TURN) << std::endl;
+      } else {
+        std::cout << "    suggestedTurn: (not available)" << std::endl;
+      }
+
+      // Print other relevant features for context
+      std::cout << "  Context:" << std::endl;
+      std::cout << "    length: " << edge.length.AsMeter() << "m" << std::endl;
+      if (edge.features.count(GraphFeature::LANE_COUNT)) {
+        std::cout << "    laneCount: " << edge.features.at(GraphFeature::LANE_COUNT) << std::endl;
+      }
+      if (edge.features.count(GraphFeature::ROUTE)) {
+        std::cout << "    route: " << (edge.features.at(GraphFeature::ROUTE) > 0 ? "yes" : "no") << std::endl;
+      }
+    }
+
+    std::cout << "\n=== End Junction Prediction ===" << std::endl;
+
+  } catch (const std::exception& e) {
+    std::cout << "Error during prediction: " << e.what() << std::endl;
+  }
 }
 
 }
