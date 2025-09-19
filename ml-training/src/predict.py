@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""
+Prediction script for junction lane suggestions.
+
+This script loads a trained model and predicts suggestedFrom, suggestedTo, and suggestedTurn
+features for junction graphs provided in JSON format.
+"""
+import argparse
+import json
+import torch
+import numpy as np
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Union
+import logging
+
+# Add safe globals for numpy objects in PyTorch checkpoints
+torch.serialization.add_safe_globals([np.core.multiarray.scalar]) # type: ignore
+
+from junction_ml.data import JunctionGraphDataset
+from junction_ml.models import JunctionGNN
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def load_model(model_path: str, device: torch.device) -> Union[torch.nn.Module, torch.jit.ScriptModule]:
+    """Load a trained model from checkpoint."""
+    if model_path.endswith('.pt') and 'torchscript' in model_path:
+        # Load TorchScript model
+        torchscript_model: torch.jit.ScriptModule = torch.jit.load(model_path, map_location=device)
+        torchscript_model.eval()
+        return torchscript_model
+    else:
+        # Load regular PyTorch model
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
+        # Extract model configuration if available
+        model_config = checkpoint.get('model_config', {
+            'node_features': 2,
+            'edge_features': 16,
+            'hidden_dim': 64,
+            'num_layers': 3,
+            'dropout': 0.1
+        })
+        
+        pytorch_model: torch.nn.Module = JunctionGNN(**model_config)
+        pytorch_model.load_state_dict(checkpoint['model_state_dict'])
+        pytorch_model.to(device)
+        pytorch_model.eval()
+        return pytorch_model
+
+
+def json_to_data(json_data: Dict[str, Any]) -> Optional[Any]:
+    """Convert JSON data to PyTorch Geometric Data object."""
+    # Create a temporary dataset instance to use its conversion method
+    dataset = JunctionGraphDataset()
+    return dataset._convert_to_pyg_data(json_data)
+
+
+def predict_junction(model: Union[torch.nn.Module, torch.jit.ScriptModule],
+                    json_data: Dict[str, Any],
+                    device: torch.device) -> Dict[str, Any]:
+    """
+    Predict lane suggestions for a single junction graph.
+    
+    Args:
+        model: Trained model
+        json_data: Junction graph data in JSON format
+        device: Device to run inference on
+        
+    Returns:
+        Dictionary with predictions and metadata
+    """
+    # Convert JSON to PyTorch Geometric data
+    data = json_to_data(json_data)
+    if data is None:
+        raise ValueError("Could not convert JSON data to PyTorch Geometric format")
+    
+    # Move data to device
+    data = data.to(device)
+    
+    # Make prediction
+    with torch.no_grad():
+        if hasattr(model, 'forward'):
+            # Regular PyTorch model
+            predictions = model(data)
+        else:
+            # TorchScript model - pass individual tensors
+            predictions = model(data.x, data.edge_index, data.edge_attr)
+            
+            # Convert tuple output to dictionary format
+            if isinstance(predictions, tuple):
+                predictions = {
+                    'suggested_from': predictions[0],
+                    'suggested_to': predictions[1], 
+                    'suggested_turn': predictions[2]
+                }
+    
+    # Apply sigmoid to binary predictions
+    suggested_from = torch.sigmoid(predictions['suggested_from']).cpu().numpy()
+    suggested_to = torch.sigmoid(predictions['suggested_to']).cpu().numpy()
+    suggested_turn = predictions['suggested_turn'].cpu().numpy()
+    
+    # Prepare results
+    results: Dict[str, Any] = {
+        'predictions': {
+            'suggestedFrom': suggested_from.tolist(),
+            'suggestedTo': suggested_to.tolist(),
+            'suggestedTurn': suggested_turn.tolist()
+        },
+        'metadata': {
+            'num_nodes': len(json_data['nodes']),
+            'num_edges': len(json_data['edges']),
+            'model_type': 'torchscript' if hasattr(model, '_c') else 'pytorch'
+        },
+        'edges': []
+    }
+    
+    # Add edge information for easier interpretation
+    for i, edge in enumerate(json_data['edges']):
+        edge_result = {
+            'from': edge['from'],
+            'to': edge['to'],
+            'predictions': {
+                'suggestedFrom': float(suggested_from[i]),
+                'suggestedTo': float(suggested_to[i]),
+                'suggestedTurn': float(suggested_turn[i])
+            }
+        }
+        
+        # Add original features for comparison if available
+        original_features = {}
+        if 'suggestedFrom' in edge:
+            original_features['suggestedFrom'] = edge['suggestedFrom']
+        if 'suggestedTo' in edge:
+            original_features['suggestedTo'] = edge['suggestedTo']
+        if 'suggestedTurn' in edge:
+            original_features['suggestedTurn'] = edge['suggestedTurn']
+        
+        if original_features:
+            edge_result['ground_truth'] = original_features
+            
+        # Add other edge features for context
+        edge_result['features'] = {
+            'length': edge.get('length', 0),
+            'laneCount': edge.get('laneCount', 0),
+            'angle': edge.get('angle', 0),
+            'oneway': edge.get('oneway', 0),
+            'route': edge.get('route', 0),
+            'type': edge.get('type', -1)
+        }
+        
+        results['edges'].append(edge_result)
+    
+    return results
+
+
+def predict_multiple_files(model: Union[torch.nn.Module, torch.jit.ScriptModule],
+                          input_files: List[str],
+                          device: torch.device,
+                          output_file: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Predict on multiple JSON files.
+    
+    Args:
+        model: Trained model
+        input_files: List of JSON file paths
+        device: Device to run inference on
+        output_file: Optional output file to save all results
+        
+    Returns:
+        List of prediction results
+    """
+    all_results = []
+    
+    for file_path in input_files:
+        logger.info(f"Processing {file_path}")
+        
+        try:
+            with open(file_path, 'r') as f:
+                json_data = json.load(f)
+            
+            result = predict_junction(model, json_data, device)
+            result['source_file'] = file_path
+            all_results.append(result)
+            
+            logger.info(f"Successfully processed {file_path}: "
+                       f"{result['metadata']['num_edges']} edges predicted")
+                       
+        except Exception as e:
+            logger.error(f"Error processing {file_path}: {e}")
+            all_results.append({
+                'source_file': file_path,
+                'error': str(e)
+            })
+    
+    if output_file:
+        logger.info(f"Saving results to {output_file}")
+        with open(output_file, 'w') as f:
+            json.dump(all_results, f, indent=2)
+    
+    return all_results
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Predict junction lane suggestions from JSON files",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Predict on a single file
+  python predict.py --model checkpoints/best.pt --input junction.json
+  
+  # Predict on multiple files
+  python predict.py --model checkpoints/best_torchscript.pt --input file1.json file2.json
+  
+  # Predict on all JSON files in a directory
+  python predict.py --model checkpoints/best.pt --input-dir ../tmp-junctions/
+  
+  # Save results to file
+  python predict.py --model checkpoints/best.pt --input junction.json --output results.json
+  
+  # Use GPU if available
+  python predict.py --model checkpoints/best.pt --input junction.json --device cuda
+        """
+    )
+    
+    parser.add_argument('--model', type=str, required=True,
+                       help='Path to trained model (.pt file)')
+    
+    parser.add_argument('--input', type=str, nargs='*',
+                       help='Input JSON file(s) to predict on')
+    
+    parser.add_argument('--input-dir', type=str,
+                       help='Directory containing JSON files to predict on')
+    
+    parser.add_argument('--output', type=str,
+                       help='Output file to save predictions (JSON format)')
+    
+    parser.add_argument('--device', type=str, default='auto',
+                       choices=['auto', 'cpu', 'cuda'],
+                       help='Device to run inference on')
+    
+    parser.add_argument('--batch-process', action='store_true',
+                       help='Process all files and save summary results')
+    
+    parser.add_argument('--verbose', '-v', action='store_true',
+                       help='Enable verbose output')
+    
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Main function."""
+    args = parse_args()
+    
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+    
+    # Determine device
+    if args.device == 'auto':
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(args.device)
+    
+    logger.info(f"Using device: {device}")
+    
+    # Load model
+    logger.info(f"Loading model from {args.model}")
+    model = load_model(args.model, device)
+    logger.info("Model loaded successfully")
+    
+    # Collect input files
+    input_files = []
+    
+    if args.input:
+        input_files.extend(args.input)
+    
+    if args.input_dir:
+        input_dir = Path(args.input_dir)
+        if not input_dir.exists():
+            raise ValueError(f"Input directory {input_dir} does not exist")
+        
+        json_files = list(input_dir.glob("*.json"))
+        input_files.extend([str(f) for f in json_files])
+    
+    if not input_files:
+        raise ValueError("No input files specified. Use --input or --input-dir")
+    
+    logger.info(f"Found {len(input_files)} input files")
+    
+    # Process files
+    if len(input_files) == 1 and not args.batch_process:
+        # Single file prediction with detailed output
+        file_path = input_files[0]
+        logger.info(f"Processing single file: {file_path}")
+        
+        with open(file_path, 'r') as f:
+            json_data = json.load(f)
+        
+        result = predict_junction(model, json_data, device)
+        
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"Results saved to {args.output}")
+        else:
+            # Print results to stdout
+            print(json.dumps(result, indent=2))
+    
+    else:
+        # Multiple files or batch processing
+        logger.info(f"Processing {len(input_files)} files")
+        results = predict_multiple_files(model, input_files, device, args.output)
+        
+        # Print summary
+        successful = sum(1 for r in results if 'error' not in r)
+        failed = len(results) - successful
+        
+        logger.info(f"Processing complete: {successful} successful, {failed} failed")
+        
+        if not args.output:
+            # Print summary results
+            for result in results:
+                if 'error' in result:
+                    print(f"ERROR {result['source_file']}: {result['error']}")
+                else:
+                    print(f"SUCCESS {result['source_file']}: "
+                          f"{result['metadata']['num_edges']} edges predicted")
+
+
+if __name__ == "__main__":
+    main()
