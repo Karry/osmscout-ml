@@ -48,7 +48,7 @@ def main() -> None:
     # Build model
     model = JunctionGNN(
         node_features=2,
-        edge_features=16,
+        edge_features=17,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         dropout=args.dropout

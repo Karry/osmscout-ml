@@ -37,7 +37,7 @@ def load_model(model_path: str, device: torch.device) -> Union[torch.nn.Module, 
         # Extract model configuration if available
         model_config = checkpoint.get('model_config', {
             'node_features': 2,
-            'edge_features': 16,
+            'edge_features': 17,
             'hidden_dim': 64,
             'num_layers': 3,
             'dropout': 0.1
@@ -147,7 +147,8 @@ def predict_junction(model: Union[torch.nn.Module, torch.jit.ScriptModule],
             'angle': edge.get('angle', 0),
             'oneway': edge.get('oneway', 0),
             'route': edge.get('route', 0),
-            'type': edge.get('type', -1)
+            'type': edge.get('type', -1),
+            'usable': edge.get('usable', 0)
         }
         
         results['edges'].append(edge_result)

@@ -158,7 +158,8 @@ class JunctionGraphDataset(Dataset):
                 edge.get('angle', 0.0),
                 edge.get('oneway', 0.0),
                 edge.get('route', 0.0),
-                edge.get('type', -1.0)
+                edge.get('type', -1.0),
+                edge.get('usable', -1.0)
             ]
 
             # Add lane turn features (up to 10 lanes)
