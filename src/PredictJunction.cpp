@@ -137,7 +137,7 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
       edgeIndices.push_back({static_cast<int64_t>(fromIt->second), static_cast<int64_t>(toIt->second)});
 
       // Extract edge features in the same order as the Python model expects:
-      // [length, laneCount, angle, oneway, route, type, laneTurn0-9]
+      // [length, laneCount, angle, oneway, route, type, usable, laneTurn0-9]
       std::vector<float> features;
 
       // Basic features
@@ -152,6 +152,8 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
                                            edge.features.at(GraphFeature::ROUTE) : 0.0)); // route
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::TYPE) ?
                                            edge.features.at(GraphFeature::TYPE) : -1.0)); // type
+      features.push_back(static_cast<float>(edge.features.contains(GraphFeature::USABLE) ?
+                                           edge.features.at(GraphFeature::USABLE) : 0.0)); // usable
 
       // Lane turn features (up to 10 lanes, as expected by the model)
       for (int i = 0; i < 10; ++i) {
@@ -183,10 +185,10 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
       edgeIndexTensor[1][i] = edgeIndices[i][1]; // to_node
     }
 
-    // Edge attributes tensor [num_edges, 16]
-    torch::Tensor edgeAttrTensor = torch::zeros({static_cast<int64_t>(edgeFeatures.size()), 16});
+    // Edge attributes tensor [num_edges, 17]
+    torch::Tensor edgeAttrTensor = torch::zeros({static_cast<int64_t>(edgeFeatures.size()), 17});
     for (size_t i = 0; i < edgeFeatures.size(); ++i) {
-      for (size_t j = 0; j < edgeFeatures[i].size() && j < 16; ++j) {
+      for (size_t j = 0; j < edgeFeatures[i].size() && j < 17; ++j) {
         edgeAttrTensor[i][j] = edgeFeatures[i][j];
       }
     }
@@ -276,10 +278,9 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
           std::cout << "    " << laneTurnKey << ": " << laneTurnVal << " (" << LaneTurnString(LaneTurn(uint8_t(laneTurnVal))) << ")" << std::endl;
         }
       }
-      // TODO: add this to context
-      // if (edge.features.contains(GraphFeature::USABLE)) {
-      //   std::cout << "    usable: " << (edge.features.at(GraphFeature::USABLE) > 0 ? "yes" : "no") << std::endl;
-      // }
+      if (edge.features.contains(GraphFeature::USABLE)) {
+        std::cout << "    usable: " << (edge.features.at(GraphFeature::USABLE) > 0 ? "yes" : "no") << std::endl;
+      }
     }
 
     std::cout << "\n=== End Junction Prediction ===" << std::endl;

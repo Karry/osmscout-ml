@@ -22,7 +22,7 @@ class JunctionGNN(nn.Module):
     
     def __init__(self,
                  node_features: int = 2,  # lat, lon
-                 edge_features: int = 16,  # length, laneCount, angle, oneway, route, type, + 10 lane turns
+                 edge_features: int = 17,  # length, laneCount, angle, oneway, route, type, usable, + 10 lane turns
                  hidden_dim: int = 64,
                  num_layers: int = 3,
                  conv_type: str = 'gcn',  # 'gcn', 'gat', or 'graph'
@@ -172,7 +172,7 @@ class JunctionTransformer(nn.Module):
     
     def __init__(self,
                  node_features: int = 2,
-                 edge_features: int = 16,
+                 edge_features: int = 17,
                  hidden_dim: int = 128,
                  num_heads: int = 8,
                  num_layers: int = 4,
