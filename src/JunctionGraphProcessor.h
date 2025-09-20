@@ -40,6 +40,8 @@ constexpr std::string SUGGESTED_TURN = "suggestedTurn";
 constexpr std::string ROUTE = "route"; // edge is part of the route
 constexpr std::string TYPE = "type";
 constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
+
+std::string WayTypeName(int typeId);
 }
 
 struct GraphEdge {

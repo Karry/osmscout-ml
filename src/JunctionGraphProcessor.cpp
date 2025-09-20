@@ -61,6 +61,63 @@ void Graph::Export(const std::filesystem::path &filePath) const {
   file.close();
 }
 
+namespace GraphFeature {
+static const std::vector<std::string> wayTypes = {
+  "highway_motorway",
+  "highway_motorway_link",
+  "highway_motorway_trunk",
+  "highway_tertiary",
+  "highway_trunk_link",
+  "highway_residential",
+  "highway_secondary",
+  "highway_secondary_link",
+  "highway_service",
+  "highway_trunk",
+  "highway_primary",
+  "highway_primary_link",
+  "highway_footway",
+  "highway_track",
+  "highway_tertiary_link",
+  "highway_pedestrian",
+  "highway_path",
+  "highway_cycleway",
+  "highway_via_ferrata_easy",
+  "highway_via_ferrata_moderate",
+  "highway_via_ferrata_difficult",
+  "highway_via_ferrata_extreme",
+  "highway_bridleway",
+  "highway_steps",
+  "highway_services",
+  "highway_construction",
+  "highway_roundabout",
+  "highway_unclassified",
+  "highway_road",
+  "highway_living_street"
+};
+
+
+int WayTypeId(const std::string& typeName) {
+  int index = 0;
+  for (const auto& wayType : wayTypes) {
+    if (wayType == typeName) {
+      return index;
+    }
+    index++;
+  }
+
+  log.Warn() << "Unknown way type: " << typeName;
+  return -1; // Unknown type
+}
+
+std::string WayTypeName(int typeId) {
+  if (typeId < 0 || static_cast<size_t>(typeId) >= wayTypes.size()) {
+    return "unknown";
+  }
+  return wayTypes[typeId];
+}
+}
+
+
 namespace {
 Distance SegmentLength(const NodeIterator start,
                        const NodeIterator end) {
@@ -80,52 +137,6 @@ GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescri
   };
 }
 
-int WayTypeId(const std::string& typeName) {
-  static const std::vector<std::string> wayTypes = {
-    "highway_motorway",
-    "highway_motorway_link",
-    "highway_motorway_trunk",
-    "highway_tertiary",
-    "highway_trunk_link",
-    "highway_residential",
-    "highway_secondary",
-    "highway_secondary_link",
-    "highway_service",
-    "highway_trunk",
-    "highway_primary",
-    "highway_primary_link",
-    "highway_footway",
-    "highway_track",
-    "highway_tertiary_link",
-    "highway_pedestrian",
-    "highway_path",
-    "highway_cycleway",
-    "highway_via_ferrata_easy",
-    "highway_via_ferrata_moderate",
-    "highway_via_ferrata_difficult",
-    "highway_via_ferrata_extreme",
-    "highway_bridleway",
-    "highway_steps",
-    "highway_services",
-    "highway_construction",
-    "highway_roundabout",
-    "highway_unclassified",
-    "highway_road",
-    "highway_living_street"
-  };
-
-  int index = 0;
-  for (const auto& wayType : wayTypes) {
-    if (wayType == typeName) {
-      return index;
-    }
-    index++;
-  }
-
-  log.Warn() << "Unknown way type: " << typeName;
-  return -1; // Unknown type
-}
-
 GraphEdge MakeEdge(const PostprocessorContext& context,
                    const NodeIterator prev,
                    const NodeIterator from,
@@ -138,7 +149,7 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
   edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
   edge.features[GraphFeature::USABLE] = 1.0; // edge should be usable when it is part of the route
   if (from->GetPathObject().IsWay()) {
-    edge.features[GraphFeature::TYPE] = WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
+    edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
   }
   if (prev != from) {
     double inBearing=GetSphericalBearingFinal(prev->GetLocation(),from->GetLocation()).AsDegrees();
@@ -199,7 +210,7 @@ void TraverseWay(const PostprocessorContext &context,
       GetSphericalDistance(from.GetCoord(), to.GetCoord())
     };
     edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
-    edge.features[GraphFeature::TYPE] = WayTypeId(way->GetType()->GetName());
+    edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(way->GetType()->GetName());
     if (direction < 0){
       edge.features[GraphFeature::USABLE] = context.CanUseBackward(dbId,
                                                                    way->GetId(id),
