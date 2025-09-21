@@ -16,7 +16,7 @@ import logging
 # Add safe globals for numpy objects in PyTorch checkpoints
 torch.serialization.add_safe_globals([np.core.multiarray.scalar]) # type: ignore
 
-from junction_ml.data import JunctionGraphDataset
+from junction_ml.data import JunctionGraphDataset, EdgeFeatureCount, NodeFeatureCount
 from junction_ml.models import JunctionGNN
 
 logging.basicConfig(level=logging.INFO)
@@ -36,8 +36,8 @@ def load_model(model_path: str, device: torch.device) -> Union[torch.nn.Module, 
 
         # Extract model configuration if available
         model_config = checkpoint.get('model_config', {
-            'node_features': 2,
-            'edge_features': 17,
+            'node_features': NodeFeatureCount,
+            'edge_features': EdgeFeatureCount,
             'hidden_dim': 64,
             'num_layers': 3,
             'dropout': 0.1

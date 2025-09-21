@@ -31,6 +31,8 @@ struct GraphNode {
 };
 
 namespace GraphFeature{
+constexpr int EdgeFeatureCount = 18; // Update when adding new features, also update it in python code
+
 constexpr std::string LANE_COUNT = "laneCount";
 constexpr std::string ANGLE = "angle";
 constexpr std::string ONEWAY = "oneway";
@@ -40,6 +42,7 @@ constexpr std::string SUGGESTED_TURN = "suggestedTurn";
 constexpr std::string ROUTE = "route"; // edge is part of the route
 constexpr std::string TYPE = "type";
 constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
+constexpr std::string VIRTUAL = "virtual"; // edge is virtual (just for information propagation in GNN)
 
 std::string WayTypeName(int typeId);
 }

@@ -137,10 +137,10 @@ GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescri
   };
 }
 
-GraphEdge MakeEdge(const PostprocessorContext& context,
-                   const NodeIterator prev,
-                   const NodeIterator from,
-                   const NodeIterator to) {
+std::pair<GraphEdge, GraphEdge> MakeEdge(const PostprocessorContext& context,
+                                         const NodeIterator prev,
+                                         const NodeIterator from,
+                                         const NodeIterator to) {
   GraphEdge edge{
     context.GetNodeId(*from),
     context.GetNodeId(*to),
@@ -148,6 +148,7 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
   };
   edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
   edge.features[GraphFeature::USABLE] = 1.0; // edge should be usable when it is part of the route
+  edge.features[GraphFeature::VIRTUAL] = 0.0; // edge is not virtual
   if (from->GetPathObject().IsWay()) {
     edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
   }
@@ -176,7 +177,14 @@ GraphEdge MakeEdge(const PostprocessorContext& context,
       edge.features[GraphFeature::SUGGESTED_TURN] = static_cast<double>(suggestedLanes->GetTurn());
     }
   }
-  return edge;
+
+  GraphEdge reverse{
+    context.GetNodeId(*to),
+    context.GetNodeId(*from),
+    edge.length
+  };
+  reverse.features[GraphFeature::VIRTUAL] = 1.0; // edge is virtual
+  return {edge, reverse};
 }
 
 void TraverseWay(const PostprocessorContext &context,
@@ -209,6 +217,7 @@ void TraverseWay(const PostprocessorContext &context,
       to.GetId(),
       GetSphericalDistance(from.GetCoord(), to.GetCoord())
     };
+    edge.features[GraphFeature::VIRTUAL] = 0.0; // edge is not virtual
     edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
     edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(way->GetType()->GetName());
     if (direction < 0){
@@ -237,6 +246,11 @@ void TraverseWay(const PostprocessorContext &context,
       edge.features[GraphFeature::ONEWAY] = accessDesc->IsOneway() ? 1.0 : 0.0;
     }
     graph.edges.push_back(edge);
+
+    GraphEdge reverse{edge.toNode, edge.fromNode, edge.length};
+    reverse.features[GraphFeature::VIRTUAL] = 1.0; // edge is virtual
+    graph.edges.push_back(reverse);
+
     distance += edge.length;
     if (distance > Meters(30)) {
       break; // Stop if the distance exceeds 50 meters
@@ -291,7 +305,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         graph.InsertNode(CreateGraphNode(context, *toNode));
 
         // Create an edge
-        GraphEdge edge=MakeEdge(context, prevNode, fromNode, toNode);
+        auto [edge, reverse]=MakeEdge(context, prevNode, fromNode, toNode);
         if (ahead) {
           distanceAhead += edge.length;
         } else if (toNode == nodeIt) {
@@ -299,6 +313,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         }
 
         graph.edges.push_back(edge);
+        graph.edges.push_back(reverse);
 
         for (const auto nodeExitRef: fromNode->GetObjects()){
           if (!nodeExitRef.Valid() ||

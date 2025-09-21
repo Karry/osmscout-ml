@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GATConv, GraphConv, global_mean_pool, global_max_pool # type: ignore[import-untyped]
 from torch_geometric.data import Data, Batch # type: ignore[import-untyped]
+from junction_ml.data import EdgeFeatureCount, NodeFeatureCount
 from typing import Dict, Optional, Tuple, Any
 import logging
 
@@ -21,8 +22,8 @@ class JunctionGNN(nn.Module):
     """
     
     def __init__(self,
-                 node_features: int = 2,  # lat, lon
-                 edge_features: int = 17,  # length, laneCount, angle, oneway, route, type, usable, + 10 lane turns
+                 node_features: int = NodeFeatureCount,
+                 edge_features: int = EdgeFeatureCount,
                  hidden_dim: int = 64,
                  num_layers: int = 3,
                  conv_type: str = 'gcn',  # 'gcn', 'gat', or 'graph'
@@ -171,8 +172,8 @@ class JunctionTransformer(nn.Module):
     """
     
     def __init__(self,
-                 node_features: int = 2,
-                 edge_features: int = 17,
+                 node_features: int = NodeFeatureCount,
+                 edge_features: int = EdgeFeatureCount,
                  hidden_dim: int = 128,
                  num_heads: int = 8,
                  num_layers: int = 4,

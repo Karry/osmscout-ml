@@ -5,7 +5,7 @@ import random
 import torch
 from torch_geometric.data import DataLoader # type: ignore[import-untyped]
 
-from junction_ml.data import JunctionGraphDataset
+from junction_ml.data import JunctionGraphDataset, EdgeFeatureCount, NodeFeatureCount
 from junction_ml.models import JunctionGNN
 from junction_ml.training import create_trainer
 
@@ -47,8 +47,8 @@ def main() -> None:
 
     # Build model
     model = JunctionGNN(
-        node_features=2,
-        edge_features=17,
+        node_features=NodeFeatureCount,
+        edge_features=EdgeFeatureCount,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         dropout=args.dropout
