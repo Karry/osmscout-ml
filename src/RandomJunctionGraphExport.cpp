@@ -110,7 +110,7 @@ bool ProcessRoute(osmscout::SimpleRoutingServiceRef& router,
     std::make_shared<RoutePostprocessor::MaxSpeedPostprocessor>(),
     std::make_shared<RoutePostprocessor::InstructionPostprocessor>(),
     std::make_shared<RoutePostprocessor::POIsPostprocessor>(),
-    std::make_shared<JunctionGraphExportProcessor>(junctionExportDir),
+    std::make_shared<ComplexJunctionGraphExportProcessor>(junctionExportDir),
   };
 
   RoutePostprocessor postprocessor;
