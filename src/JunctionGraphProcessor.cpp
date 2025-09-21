@@ -369,4 +369,14 @@ void JunctionGraphExportProcessor::ProcessJunctionGraph(const Graph &graph,
   graph.Export(exportDirectory / junctionFileName);
 }
 
+void ComplexJunctionGraphExportProcessor::ProcessJunctionGraph(const Graph &graph, const RouteDescription::Node &node)
+{
+  if (std::any_of(graph.edges.begin(), graph.edges.end(),
+             [](const GraphEdge& edge) {
+               return edge.features.contains(GraphFeature::LANE_COUNT) && edge.features.at(GraphFeature::LANE_COUNT) > 1.0;
+             })) {
+    JunctionGraphExportProcessor::ProcessJunctionGraph(graph, node);
+  }
+}
+
 }

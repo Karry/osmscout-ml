@@ -113,4 +113,21 @@ public:
 
 using JunctionGraphExportProcessorRef = std::shared_ptr<JunctionGraphExportProcessor>;
 
+class ComplexJunctionGraphExportProcessor: public JunctionGraphExportProcessor {
+public:
+  explicit ComplexJunctionGraphExportProcessor(const std::filesystem::path& exportDirectory):
+    JunctionGraphExportProcessor(exportDirectory)
+  {}
+  ~ComplexJunctionGraphExportProcessor() override = default;
+
+  ComplexJunctionGraphExportProcessor(const ComplexJunctionGraphExportProcessor&) = delete;
+  ComplexJunctionGraphExportProcessor& operator=(const ComplexJunctionGraphExportProcessor&) = delete;
+
+  ComplexJunctionGraphExportProcessor(ComplexJunctionGraphExportProcessor&&) = delete;
+  ComplexJunctionGraphExportProcessor& operator=(ComplexJunctionGraphExportProcessor&&) = delete;
+
+  void ProcessJunctionGraph(const Graph &graph,
+                            const RouteDescription::Node &node) override;
+
+};
 }
