@@ -154,6 +154,8 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
                                            edge.features.at(GraphFeature::TYPE) : -1.0)); // type
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::USABLE) ?
                                            edge.features.at(GraphFeature::USABLE) : 0.0)); // usable
+      features.push_back(static_cast<float>(edge.features.contains(GraphFeature::VIRTUAL) ?
+                                           edge.features.at(GraphFeature::VIRTUAL) : 0.0)); // virtual
 
       // Lane turn features (up to 10 lanes, as expected by the model)
       for (int i = 0; i < 10; ++i) {
@@ -185,10 +187,10 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
       edgeIndexTensor[1][i] = edgeIndices[i][1]; // to_node
     }
 
-    // Edge attributes tensor [num_edges, 17]
-    torch::Tensor edgeAttrTensor = torch::zeros({static_cast<int64_t>(edgeFeatures.size()), 17});
+    // Edge attributes tensor [num_edges, GraphFeature::EdgeFeatureCount]
+    torch::Tensor edgeAttrTensor = torch::zeros({static_cast<int64_t>(edgeFeatures.size()), GraphFeature::EdgeFeatureCount});
     for (size_t i = 0; i < edgeFeatures.size(); ++i) {
-      for (size_t j = 0; j < edgeFeatures[i].size() && j < 17; ++j) {
+      for (size_t j = 0; j < edgeFeatures[i].size() && j < GraphFeature::EdgeFeatureCount; ++j) {
         edgeAttrTensor[i][j] = edgeFeatures[i][j];
       }
     }
@@ -218,6 +220,10 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
     std::cout << "\n=== Edge Predictions vs Heuristics ===" << std::endl;
     for (size_t i = 0; i < graph.edges.size() && i < edgeIndices.size(); ++i) {
       const auto& edge = graph.edges[i];
+      if (edge.features.contains(GraphFeature::VIRTUAL) &&
+          edge.features.at(GraphFeature::VIRTUAL) == 1.0) {
+        continue; // Skip virtual edges
+      }
 
       std::cout << "\nEdge " << i << " (from " << edge.fromNode << " to " << edge.toNode << "):" << std::endl;
 

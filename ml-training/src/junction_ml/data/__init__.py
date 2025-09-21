@@ -14,6 +14,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+EdgeFeatureCount = 18
+"""
+Number of edge features including lane turns:
+length, laneCount, angle, oneway, route, type, usable, virtual, + 10 lane turns
+"""
+
+NodeFeatureCount = 2
+"""
+Number of node features:
+lat, lon
+"""
+
 
 class JunctionGraphDataset(Dataset):
     """
@@ -133,6 +145,7 @@ class JunctionGraphDataset(Dataset):
         node_features = []
         for node in nodes:
             features = [node['lat'], node['lon']]
+            assert(len(features) == NodeFeatureCount), f"Expected {NodeFeatureCount} node features, got {len(features)}"
             node_features.append(features)
 
         x = torch.tensor(node_features, dtype=torch.float32)
@@ -159,13 +172,16 @@ class JunctionGraphDataset(Dataset):
                 edge.get('oneway', 0.0),
                 edge.get('route', 0.0),
                 edge.get('type', -1.0),
-                edge.get('usable', -1.0)
+                edge.get('usable', 0.0),
+                edge.get('virtual', 0.0)
             ]
 
             # Add lane turn features (up to 10 lanes)
             for i in range(10):
                 lane_turn_key = f'laneTurn{i}'
                 features.append(edge.get(lane_turn_key, -1.0))
+
+            assert(len(features) == EdgeFeatureCount), f"Expected {EdgeFeatureCount} edge features, got {len(features)}"
 
             edge_features.append(features)
 
