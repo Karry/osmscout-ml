@@ -1,6 +1,7 @@
 #!/bin/env python3
 import argparse
 import random
+import logging
 
 import torch
 from torch_geometric.data import DataLoader # type: ignore[import-untyped]
@@ -24,11 +25,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--dropout', type=float, default=0.1, help="Dropout rate")
     parser.add_argument('--val-ratio', type=float, default=0.1, help="Validation split ratio")
     parser.add_argument('--seed', type=int, default=42, help="Random seed")
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     torch.manual_seed(args.seed)
     random.seed(args.seed)
 
