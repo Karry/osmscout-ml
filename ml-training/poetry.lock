@@ -406,6 +406,31 @@ webencodings = "*"
 css = ["tinycss2 (>=1.1.0,<1.5)"]
 
 [[package]]
+name = "captum"
+version = "0.8.0"
+description = "Model interpretability for PyTorch"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "captum-0.8.0-py3-none-any.whl", hash = "sha256:b0465431f5cbc666d86c14ee853ee6155e97460369238f85bd10a241b87eea47"},
+    {file = "captum-0.8.0.tar.gz", hash = "sha256:73f2e5a07ffe6ac6647a6f12cd2f67f0d8f717329f150ddf08ef73cba0858d26"},
+]
+
+[package.dependencies]
+matplotlib = "*"
+numpy = "<2.0"
+packaging = "*"
+torch = ">=1.10"
+tqdm = "*"
+
+[package.extras]
+dev = ["annoy", "black", "flake8", "flask", "flask-compress", "ipython", "ipywidgets", "jupyter", "mypy (>=0.760)", "parameterized", "pytest", "pytest-cov", "scikit-learn", "sphinx", "sphinx-autodoc-typehints", "sphinxcontrib-katex", "ufmt", "usort (==1.0.2)"]
+insights = ["flask", "flask-compress", "ipython", "ipywidgets", "jupyter"]
+test = ["parameterized", "pytest", "pytest-cov"]
+tutorials = ["flask", "flask-compress", "ipython", "ipywidgets", "jupyter", "torchtext", "torchvision"]
+
+[[package]]
 name = "certifi"
 version = "2025.8.3"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -4727,4 +4752,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12.0,<3.14.0"
-content-hash = "09ff13883c587729778487f816d696c8d735d3e6a46b54ec0580f583f124bafa"
+content-hash = "9c5a6857c6d376af541de29ef06ca69459bf0b21a31cf6c3d87a44ae8627416e"
