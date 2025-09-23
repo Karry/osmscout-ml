@@ -40,8 +40,9 @@ logger = logging.getLogger(__name__)
 
 # Feature names for better interpretability
 EDGE_FEATURE_NAMES = [
-    'length', 'laneCount', 'angle', 'oneway', 'route', 'type', 'usable'
-    # Add more if you have additional edge features
+    'length', 'laneCount', 'angle', 'oneway', 'route', 'type', 'usable', "virtual",
+    "laneTurn0", "laneTurn1", "laneTurn2", "laneTurn3", "laneTurn4", "laneTurn5",
+    "laneTurn6", "laneTurn7", "laneTurn8", "laneTurn9"
 ]
 
 NODE_FEATURE_NAMES = [
