@@ -82,6 +82,11 @@ public:
   JunctionGraphPredictProcessor(JunctionGraphPredictProcessor&&) = delete;
   JunctionGraphPredictProcessor& operator=(JunctionGraphPredictProcessor&&) = delete;
 
+  /** Process the junction graph using the ML model
+   *
+   * @param graph - normalized graph
+   * @param node
+   */
   void ProcessJunctionGraph(const Graph &graph,
                             const RouteDescription::Node &node) override;
 };

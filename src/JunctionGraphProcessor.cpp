@@ -28,6 +28,69 @@ namespace osmscout {
 
 using NodeIterator = std::list<RouteDescription::Node>::iterator;
 
+void Graph::Normalize()
+{
+  // evaluate angle of the first edge, then normalize all nodes
+  // the way that the first edge heads to east (bearing 0) and has normalizedLocation (0,0)
+  // all other nodes has normalizedLocation relative to this transformation
+
+  if (nodes.empty() || edges.empty()) {
+    return;
+  }
+
+  // Find the first edge to use as reference
+  const auto& firstEdge = edges[0];
+
+  // Find the nodes corresponding to the first edge
+  auto fromNodeIt = std::find_if(nodes.begin(), nodes.end(),
+    [&firstEdge](const GraphNode& node) { return node.id == firstEdge.fromNode; });
+  auto toNodeIt = std::find_if(nodes.begin(), nodes.end(),
+    [&firstEdge](const GraphNode& node) { return node.id == firstEdge.toNode; });
+
+  if (fromNodeIt == nodes.end() || toNodeIt == nodes.end()) {
+    return;
+  }
+
+  // Calculate the bearing of the first edge
+  double bearing = GetSphericalBearingInitial(fromNodeIt->location, toNodeIt->location).AsDegrees();
+
+  // Calculate rotation angle to make the first edge point east (0 degrees)
+  double rotationAngle = -bearing;
+
+  // Convert to radians for trigonometric functions
+  double rotationRad = rotationAngle * M_PI / 180.0;
+  double cosRot = std::cos(rotationRad);
+  double sinRot = std::sin(rotationRad);
+
+  // Use the first node as origin (0,0)
+  GeoCoord origin = fromNodeIt->location;
+
+  // Transform all nodes
+  for (auto& node : nodes) {
+    // Calculate relative position in meters using approximate local projection
+    double deltaLat = (node.location.GetLat() - origin.GetLat()) * 111320.0; // meters per degree lat
+    double deltaLon = (node.location.GetLon() - origin.GetLon()) * 111320.0 * std::cos(origin.GetLat() * M_PI / 180.0); // meters per degree lon
+
+    // Apply rotation
+    double rotatedX = deltaLon * cosRot - deltaLat * sinRot;
+    double rotatedY = deltaLon * sinRot + deltaLat * cosRot;
+
+    // Convert back to lat/lon for normalizedLocation (using approximate conversion)
+    double normalizedLat = origin.GetLat() + rotatedY / 111320.0;
+    double normalizedLon = origin.GetLon() + rotatedX / (111320.0 * std::cos(origin.GetLat() * M_PI / 180.0));
+
+    node.normalizedLocation = GeoCoord(normalizedLat, normalizedLon);
+  }
+
+  // Adjust so that the first node is at (0,0)
+  GeoCoord firstNodeNormalized = fromNodeIt->normalizedLocation;
+  for (auto& node : nodes) {
+    double adjustedLat = node.normalizedLocation.GetLat() - firstNodeNormalized.GetLat();
+    double adjustedLon = node.normalizedLocation.GetLon() - firstNodeNormalized.GetLon();
+    node.normalizedLocation = GeoCoord(adjustedLat, adjustedLon);
+  }
+}
+
 void Graph::Export(const std::filesystem::path &filePath) const {
   std::ofstream file(filePath);
   if (!file.is_open()) {
@@ -41,7 +104,9 @@ void Graph::Export(const std::filesystem::path &filePath) const {
     j["nodes"].push_back({
       {"id", node.id},
       {"lat", node.location.GetLat()},
-      {"lon", node.location.GetLon()}
+      {"lon", node.location.GetLon()},
+      {"normLat", node.normalizedLocation.GetLat()},
+      {"normLon", node.normalizedLocation.GetLon()}
     });
   }
   // Export edges
@@ -341,6 +406,7 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         fromNode = toNode;
       }
       if (!graph.edges.empty()) {
+        graph.Normalize();
         ProcessJunctionGraph(graph, node);
       }
       junctionStart = nodeIt;

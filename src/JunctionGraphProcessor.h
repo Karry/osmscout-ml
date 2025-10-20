@@ -28,6 +28,7 @@ namespace osmscout {
 struct GraphNode {
   Id id;
   GeoCoord location;
+  GeoCoord normalizedLocation;
 };
 
 namespace GraphFeature{
@@ -61,6 +62,8 @@ struct Graph {
   std::set<Id> nodeIdSet;
 
   void Export(const std::filesystem::path &filePath) const;
+
+  void Normalize();
 
   inline bool InsertNode(GraphNode node) {
     if (nodeIdSet.find(node.id) != nodeIdSet.end()) {
