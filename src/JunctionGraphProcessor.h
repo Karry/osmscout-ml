@@ -29,6 +29,8 @@ struct GraphNode {
   Id id;
   GeoCoord location;
   GeoCoord normalizedLocation;
+  int incoming=0;
+  int outgoing=0;
 };
 
 namespace GraphFeature{
@@ -53,6 +55,9 @@ struct GraphEdge {
   Id toNode;
   Distance length;
   std::unordered_map<std::string, double> features;
+
+  bool isUsable() const;
+  bool isVirtual() const;
 };
 
 struct Graph {

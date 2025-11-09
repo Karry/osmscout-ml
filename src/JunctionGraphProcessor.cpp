@@ -28,6 +28,16 @@ namespace osmscout {
 
 using NodeIterator = std::list<RouteDescription::Node>::iterator;
 
+bool GraphEdge::isUsable() const
+{
+  return features.find(GraphFeature::USABLE)!=features.end() && features.at(GraphFeature::USABLE) > 0;
+}
+
+bool GraphEdge::isVirtual() const
+{
+  return features.find(GraphFeature::VIRTUAL)!=features.end() && features.at(GraphFeature::VIRTUAL) > 0;
+}
+
 void Graph::Normalize()
 {
   // evaluate angle of the first edge, then normalize all nodes
@@ -89,6 +99,32 @@ void Graph::Normalize()
     double adjustedLon = node.normalizedLocation.GetLon() - firstNodeNormalized.GetLon();
     node.normalizedLocation = GeoCoord(adjustedLat, adjustedLon);
   }
+
+  // compute cardinality (degree of each node)
+  for (auto& node : nodes) {
+    node.outgoing = 0;
+    node.incoming = 0;
+  }
+
+  for (const auto& edge : edges) {
+    if (!edge.isUsable() || edge.isVirtual()) {
+      continue; // skip virtual or unusable edges
+    }
+
+    // Count outgoing edges for fromNode
+    auto fromNodeIt = std::find_if(nodes.begin(), nodes.end(),
+      [&edge](const GraphNode& node) { return node.id == edge.fromNode; });
+    if (fromNodeIt != nodes.end()) {
+      fromNodeIt->outgoing++;
+    }
+
+    // Count incoming edges for toNode
+    auto toNodeIt = std::find_if(nodes.begin(), nodes.end(),
+      [&edge](const GraphNode& node) { return node.id == edge.toNode; });
+    if (toNodeIt != nodes.end()) {
+      toNodeIt->incoming++;
+    }
+  }
 }
 
 void Graph::Export(const std::filesystem::path &filePath) const {
@@ -106,7 +142,9 @@ void Graph::Export(const std::filesystem::path &filePath) const {
       {"lat", node.location.GetLat()},
       {"lon", node.location.GetLon()},
       {"normLat", node.normalizedLocation.GetLat()},
-      {"normLon", node.normalizedLocation.GetLon()}
+      {"normLon", node.normalizedLocation.GetLon()},
+      {"incoming", node.incoming},
+      {"outgoing", node.outgoing}
     });
   }
   // Export edges
