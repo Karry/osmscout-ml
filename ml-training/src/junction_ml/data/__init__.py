@@ -20,10 +20,10 @@ Number of edge features including lane turns:
 length, laneCount, angle, oneway, route, type, usable, virtual, + 10 lane turns
 """
 
-NodeFeatureCount = 2
+NodeFeatureCount = 4
 """
 Number of node features:
-lat, lon
+lat, lon (normalized), incoming edge count, outgoing edge count
 """
 
 
@@ -144,7 +144,7 @@ class JunctionGraphDataset(Dataset):
         # Node features (coordinates)
         node_features = []
         for node in nodes:
-            features = [node['normLat'], node['normLon']]
+            features = [node['normLat'], node['normLon'], node['incoming'], node['outgoing']]
             assert(len(features) == NodeFeatureCount), f"Expected {NodeFeatureCount} node features, got {len(features)}"
             node_features.append(features)
 

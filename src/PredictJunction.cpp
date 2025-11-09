@@ -122,7 +122,9 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
     for (const auto& graphNode : graph.nodes) {
       nodeFeatures.push_back({
         static_cast<float>(graphNode.normalizedLocation.GetLat()),
-        static_cast<float>(graphNode.normalizedLocation.GetLon())
+        static_cast<float>(graphNode.normalizedLocation.GetLon()),
+        static_cast<float>(graphNode.incoming),
+        static_cast<float>(graphNode.outgoing)
       });
     }
 
