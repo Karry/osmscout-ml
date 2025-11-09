@@ -121,8 +121,8 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
     std::vector<std::vector<float>> nodeFeatures;
     for (const auto& graphNode : graph.nodes) {
       nodeFeatures.push_back({
-        static_cast<float>(graphNode.location.GetLat()),
-        static_cast<float>(graphNode.location.GetLon())
+        static_cast<float>(graphNode.normalizedLocation.GetLat()),
+        static_cast<float>(graphNode.normalizedLocation.GetLon())
       });
     }
 

@@ -144,7 +144,7 @@ class JunctionGraphDataset(Dataset):
         # Node features (coordinates)
         node_features = []
         for node in nodes:
-            features = [node['lat'], node['lon']]
+            features = [node['normLat'], node['normLon']]
             assert(len(features) == NodeFeatureCount), f"Expected {NodeFeatureCount} node features, got {len(features)}"
             node_features.append(features)
 
