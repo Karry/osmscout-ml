@@ -36,7 +36,7 @@ class JunctionGraphDataset(Dataset):
     """
 
     def __init__(self,
-                 data_dir: str = "../tmp-junctions",
+                 data_dir: Optional[str] = None,
                  transform: Optional[Callable] = None,
                  pre_transform: Optional[Callable] = None,
                  pre_filter: Optional[Callable] = None) -> None:
@@ -49,17 +49,17 @@ class JunctionGraphDataset(Dataset):
             pre_transform: Optional transform to apply before caching
             pre_filter: Optional filter to apply before caching
         """
-        self.data_dir = Path(data_dir)
+        self.data_dir = Path(data_dir) if data_dir else None
         self.feature_scaler = StandardScaler()
         self.label_encoders: dict[str, Any] = {}
         self.feature_names: list[str] = []
 
-        super().__init__(str(self.data_dir), transform, pre_transform, pre_filter)
+        super().__init__(data_dir, transform, pre_transform, pre_filter)
 
     @property
     def raw_file_names(self) -> List[str]:
         """Get list of raw JSON files."""
-        if not self.data_dir.exists():
+        if not self.data_dir or not self.data_dir.exists():
             return []
         return [f.name for f in self.data_dir.glob("*.json")]
 
@@ -74,6 +74,9 @@ class JunctionGraphDataset(Dataset):
 
     def process(self) -> None:
         """Process raw JSON files into PyTorch Geometric format."""
+        if not self.data_dir:
+            logger.info(f"Not loading data as no data directory is specified.")
+            return
         logger.info(f"Processing {len(self.raw_file_names)} junction files...")
 
         data_list = []

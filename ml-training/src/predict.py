@@ -16,7 +16,7 @@ import logging
 # Add safe globals for numpy objects in PyTorch checkpoints
 torch.serialization.add_safe_globals([np.core.multiarray.scalar]) # type: ignore
 
-from junction_ml.data import JunctionGraphDataset, EdgeFeatureCount, NodeFeatureCount
+from junction_ml.data import EdgeFeatureCount, NodeFeatureCount, JunctionGraphDataset
 from junction_ml.models import JunctionGNN
 
 logging.basicConfig(level=logging.INFO)
@@ -35,14 +35,31 @@ def load_model(model_path: str, device: torch.device) -> Union[torch.nn.Module, 
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
         # Extract model configuration if available
-        model_config = checkpoint.get('model_config', {
-            'node_features': NodeFeatureCount,
-            'edge_features': EdgeFeatureCount,
-            'hidden_dim': 64,
-            'num_layers': 3,
-            'dropout': 0.1
-        })
-        
+        if 'model_config' in checkpoint:
+            model_config = checkpoint['model_config']
+        else:
+            # Try to infer configuration from state_dict
+            state_dict = checkpoint['model_state_dict']
+
+            # Detect number of layers by finding the highest conv layer index
+            conv_layer_indices = [int(k.split('.')[1]) for k in state_dict.keys() if k.startswith('convs.')]
+            num_layers = max(conv_layer_indices) + 1 if conv_layer_indices else 3
+
+            # Detect hidden_dim from the first conv layer weight shape
+            hidden_dim = 64  # default
+            if 'convs.0.lin.weight' in state_dict:
+                hidden_dim = state_dict['convs.0.lin.weight'].shape[0]
+
+            logger.info(f"Inferred model config: num_layers={num_layers}, hidden_dim={hidden_dim}")
+
+            model_config = {
+                'node_features': NodeFeatureCount,
+                'edge_features': EdgeFeatureCount,
+                'hidden_dim': hidden_dim,
+                'num_layers': num_layers,
+                'dropout': 0.1
+            }
+
         pytorch_model: torch.nn.Module = JunctionGNN(**model_config)
         pytorch_model.load_state_dict(checkpoint['model_state_dict'])
         pytorch_model.to(device)
