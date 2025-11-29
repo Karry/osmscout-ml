@@ -127,7 +127,7 @@ class JunctionGNN(nn.Module):
     def _predict_edges(self, 
                       node_embeddings: torch.Tensor, 
                       edge_index: torch.Tensor,
-                      edge_embeddings: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+                      edge_embeddings: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Predict edge-level outputs.
         
@@ -137,7 +137,7 @@ class JunctionGNN(nn.Module):
             edge_embeddings: Optional edge embeddings [num_edges, hidden_dim]
             
         Returns:
-            Dictionary with edge predictions
+            Binary predictions for each edge [num_edges]
         """
         row, col = edge_index
         
@@ -151,16 +151,10 @@ class JunctionGNN(nn.Module):
         # Edge prediction
         edge_repr = self.edge_predictor(edge_features)
         
-        # Multi-task predictions
-        suggested_from = self.suggested_from_head(edge_repr).squeeze(-1)
-        suggested_to = self.suggested_to_head(edge_repr).squeeze(-1)
-        suggested_turn = self.suggested_turn_head(edge_repr).squeeze(-1)
-        
-        return {
-            'suggested_from': suggested_from,
-            'suggested_to': suggested_to,
-            'suggested_turn': suggested_turn
-        }
+        # Binary classification: is this lane suggested?
+        suggested = self.suggested_head(edge_repr).squeeze(-1)
+
+        return suggested
 
 
 class JunctionTransformer(nn.Module):
@@ -347,9 +341,7 @@ class JunctionGNNTorchScript(nn.Module):
         # Edge prediction
         edge_repr = self.gnn.edge_predictor(edge_features_concat)
 
-        # Multi-task predictions
-        suggested_from = self.gnn.suggested_from_head(edge_repr).squeeze(-1)
-        suggested_to = self.gnn.suggested_to_head(edge_repr).squeeze(-1)
-        suggested_turn = self.gnn.suggested_turn_head(edge_repr).squeeze(-1)
+        # Binary classification: is this lane suggested?
+        suggested = self.gnn.suggested_head(edge_repr).squeeze(-1)
 
-        return suggested_from, suggested_to, suggested_turn
+        return suggested

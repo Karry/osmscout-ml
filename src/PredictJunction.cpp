@@ -148,28 +148,24 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
       std::vector<float> features;
 
       // Basic features
-      features.push_back(static_cast<float>(edge.length.AsMeter())); // length
+      // New lane-level features (9 total)
+      features.push_back(static_cast<float>(edge.length.AsMeter())); // 1. length
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::LANE_COUNT) ?
-                                           edge.features.at(GraphFeature::LANE_COUNT) : 0.0)); // laneCount
+                                           edge.features.at(GraphFeature::LANE_COUNT) : 0.0)); // 2. laneCount
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::ANGLE) ?
-                                           edge.features.at(GraphFeature::ANGLE) : 0.0)); // angle
-      features.push_back(static_cast<float>(edge.features.contains(GraphFeature::ONEWAY) ?
-                                           edge.features.at(GraphFeature::ONEWAY) : 0.0)); // oneway
+                                           edge.features.at(GraphFeature::ANGLE) : 0.0)); // 3. angle
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::ROUTE) ?
-                                           edge.features.at(GraphFeature::ROUTE) : 0.0)); // route
+                                           edge.features.at(GraphFeature::ROUTE) : 0.0)); // 4. route
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::TYPE) ?
-                                           edge.features.at(GraphFeature::TYPE) : -1.0)); // type
+                                           edge.features.at(GraphFeature::TYPE) : -1.0)); // 5. type
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::USABLE) ?
-                                           edge.features.at(GraphFeature::USABLE) : 0.0)); // usable
+                                           edge.features.at(GraphFeature::USABLE) : 0.0)); // 6. usable
       features.push_back(static_cast<float>(edge.features.contains(GraphFeature::VIRTUAL) ?
-                                           edge.features.at(GraphFeature::VIRTUAL) : 0.0)); // virtual
-
-      // Lane turn features (up to 10 lanes, as expected by the model)
-      for (int i = 0; i < 10; ++i) {
-        std::string laneTurnKey = "laneTurn" + std::to_string(i);
-        features.push_back(static_cast<float>(edge.features.contains(laneTurnKey) ?
-                                             edge.features.at(laneTurnKey) : -1.0));
-      }
+                                           edge.features.at(GraphFeature::VIRTUAL) : 0.0)); // 7. virtual
+      features.push_back(static_cast<float>(edge.features.contains(GraphFeature::RELATIVE_LANE_POSITION) ?
+                                           edge.features.at(GraphFeature::RELATIVE_LANE_POSITION) : 0.0)); // 8. relativeLanePosition
+      features.push_back(static_cast<float>(edge.features.contains(GraphFeature::LANE_TURN) ?
+                                           edge.features.at(GraphFeature::LANE_TURN) : -1.0)); // 9. laneTurn
 
       edgeFeatures.push_back(features);
     }
@@ -212,87 +208,80 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
     std::cout << "Running model inference..." << std::endl;
     torch::jit::IValue output = model.forward(inputs);
 
-    // Extract predictions from output tuple (not dictionary)
-    auto outputTuple = output.toTuple();
-    torch::Tensor suggestedFromPred = outputTuple->elements()[0].toTensor();
-    torch::Tensor suggestedToPred = outputTuple->elements()[1].toTensor();
-    torch::Tensor suggestedTurnPred = outputTuple->elements()[2].toTensor();
+    // Extract single prediction tensor (binary: is this lane suggested?)
+    torch::Tensor suggestedPred = output.toTensor();
 
-    // Apply sigmoid to get probabilities for binary predictions
-    suggestedFromPred = torch::sigmoid(suggestedFromPred);
-    suggestedToPred = torch::sigmoid(suggestedToPred);
-    // suggestedTurn might be a regression output, so we don't apply sigmoid
+    // Apply sigmoid to get probabilities for binary classification
+    suggestedPred = torch::sigmoid(suggestedPred);
 
-    // Print predictions alongside heuristic suggestions for each edge
-    std::cout << "\n=== Edge Predictions vs Heuristics ===" << std::endl;
+    // Print lane-level predictions
+    std::cout << "\n=== Lane Predictions (per-lane edges) ===" << std::endl;
+
+    // Group edges by highway (fromNode -> toNode pair)
+    std::map<std::pair<Id, Id>, std::vector<size_t>> edgesByHighway;
     for (size_t i = 0; i < graph.edges.size() && i < edgeIndices.size(); ++i) {
       const auto& edge = graph.edges[i];
       if (edge.features.contains(GraphFeature::VIRTUAL) &&
           edge.features.at(GraphFeature::VIRTUAL) == 1.0) {
         continue; // Skip virtual edges
       }
+      edgesByHighway[{edge.fromNode, edge.toNode}].push_back(i);
+    }
 
-      std::cout << "\nEdge " << i << " (from " << edge.fromNode << " to " << edge.toNode << "):" << std::endl;
+    // Print grouped by highway
+    for (const auto& [highway, laneIndices] : edgesByHighway) {
+      std::cout << "\n--- Highway from Node " << highway.first << " to Node " << highway.second << " ---" << std::endl;
 
-      // Print model predictions
-      float predFrom = suggestedFromPred[i].item<float>();
-      float predTo = suggestedToPred[i].item<float>();
-      float predTurn = suggestedTurnPred[i].item<float>();
-
-      std::cout << "  Model Predictions:" << std::endl;
-      std::cout << "    suggestedFrom: " << std::fixed << std::setprecision(3) << predFrom << std::endl;
-      std::cout << "    suggestedTo:   " << std::fixed << std::setprecision(3) << predTo << std::endl;
-      std::cout << "    suggestedTurn: " << std::fixed << std::setprecision(3) << predTurn << " (" <<  LaneTurnString(LaneTurn(uint8_t(predTurn))) << ")" << std::endl;
-
-      // Print heuristic suggestions (if available)
-      std::cout << "  Heuristic Values:" << std::endl;
-      if (edge.features.contains(GraphFeature::SUGGESTED_FROM)) {
-        std::cout << "    suggestedFrom: " << edge.features.at(GraphFeature::SUGGESTED_FROM) << std::endl;
-      } else {
-        std::cout << "    suggestedFrom: (not available)" << std::endl;
+      // Print highway-level info from first lane
+      const auto& firstEdge = graph.edges[laneIndices[0]];
+      std::cout << "  Highway info:" << std::endl;
+      std::cout << "    length: " << firstEdge.length.AsMeter() << "m" << std::endl;
+      if (firstEdge.features.contains(GraphFeature::LANE_COUNT)) {
+        std::cout << "    total lanes: " << static_cast<int>(firstEdge.features.at(GraphFeature::LANE_COUNT)) << std::endl;
       }
-
-      if (edge.features.contains(GraphFeature::SUGGESTED_TO)) {
-        std::cout << "    suggestedTo:   " << edge.features.at(GraphFeature::SUGGESTED_TO) << std::endl;
-      } else {
-        std::cout << "    suggestedTo:   (not available)" << std::endl;
+      if (firstEdge.features.contains(GraphFeature::ANGLE)) {
+        std::cout << "    angle: " << std::fixed << std::setprecision(1) << firstEdge.features.at(GraphFeature::ANGLE) << "°" << std::endl;
+      }
+      if (firstEdge.features.contains(GraphFeature::TYPE)) {
+        std::cout << "    type: " << GraphFeature::WayTypeName(firstEdge.features.at(GraphFeature::TYPE)) << std::endl;
+      }
+      if (firstEdge.features.contains(GraphFeature::ROUTE)) {
+        std::cout << "    on route: " << (firstEdge.features.at(GraphFeature::ROUTE) > 0 ? "yes" : "no") << std::endl;
       }
 
-      if (edge.features.contains(GraphFeature::SUGGESTED_TURN)) {
-        float heurTurn = edge.features.at(GraphFeature::SUGGESTED_TURN);
-        std::cout << "    suggestedTurn: " << heurTurn << " (" << LaneTurnString(LaneTurn(uint8_t(heurTurn))) << ")"  << std::endl;
-      } else {
-        std::cout << "    suggestedTurn: (not available)" << std::endl;
-      }
+      std::cout << "\n  Lanes:" << std::endl;
 
-      // Print other relevant features for context
-      // [length, laneCount, angle, oneway, route, type, laneTurn0-9]
-      std::cout << "  Context:" << std::endl;
-      std::cout << "    length: " << edge.length.AsMeter() << "m" << std::endl;
-      if (edge.features.contains(GraphFeature::LANE_COUNT)) {
-        std::cout << "    laneCount: " << edge.features.at(GraphFeature::LANE_COUNT) << std::endl;
-      }
-      if (edge.features.contains(GraphFeature::ANGLE)) {
-        std::cout << "    angle: " << edge.features.at(GraphFeature::ANGLE) << std::endl;
-      }
-      if (edge.features.contains(GraphFeature::ONEWAY)) {
-        std::cout << "    oneway: " << (edge.features.at(GraphFeature::ONEWAY) > 0 ? "yes" : "no") << std::endl;
-      }
-      if (edge.features.contains(GraphFeature::ROUTE)) {
-        std::cout << "    route: " << (edge.features.at(GraphFeature::ROUTE) > 0 ? "yes" : "no") << std::endl;
-      }
-      if (edge.features.contains(GraphFeature::TYPE)) {
-        std::cout << "    type: " << edge.features.at(GraphFeature::TYPE) << " (" << GraphFeature::WayTypeName(edge.features.at(GraphFeature::TYPE)) << ")" << std::endl;
-      }
-      for (int j = 0; j < 10; ++j) {
-        std::string laneTurnKey = "laneTurn" + std::to_string(j);
-        if (edge.features.contains(laneTurnKey)) {
-          float laneTurnVal = edge.features.at(laneTurnKey);
-          std::cout << "    " << laneTurnKey << ": " << laneTurnVal << " (" << LaneTurnString(LaneTurn(uint8_t(laneTurnVal))) << ")" << std::endl;
+      // Print each lane
+      for (size_t idx : laneIndices) {
+        const auto& edge = graph.edges[idx];
+
+        // Get lane-specific features
+        double lanePos = edge.features.contains(GraphFeature::RELATIVE_LANE_POSITION)
+                         ? edge.features.at(GraphFeature::RELATIVE_LANE_POSITION) : -1.0;
+        double laneTurn = edge.features.contains(GraphFeature::LANE_TURN)
+                          ? edge.features.at(GraphFeature::LANE_TURN) : -1.0;
+        double heuristicSuggested = edge.features.contains(GraphFeature::SUGGESTED)
+                                    ? edge.features.at(GraphFeature::SUGGESTED) : -1.0;
+
+        // Get model prediction
+        float predSuggested = suggestedPred[idx].item<float>();
+
+        // Format lane position
+        std::string posStr;
+        if (lanePos < 0.33) posStr = "left ";
+        else if (lanePos > 0.67) posStr = "right";
+        else posStr = "mid  ";
+
+        // Print lane info
+        std::cout << "    Lane (pos=" << std::fixed << std::setprecision(2) << lanePos << ", " << posStr << "): ";
+        std::cout << "turn=" << LaneTurnString(LaneTurn(uint8_t(laneTurn)));
+        std::cout << ", predicted=" << std::fixed << std::setprecision(3) << predSuggested;
+        std::cout << (predSuggested > 0.5 ? " ✓" : "");
+
+        if (heuristicSuggested >= 0) {
+          std::cout << ", heuristic=" << (heuristicSuggested > 0.5 ? "YES" : "NO");
         }
-      }
-      if (edge.features.contains(GraphFeature::USABLE)) {
-        std::cout << "    usable: " << (edge.features.at(GraphFeature::USABLE) > 0 ? "yes" : "no") << std::endl;
+        std::cout << std::endl;
       }
     }
 

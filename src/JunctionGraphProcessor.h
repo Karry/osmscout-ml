@@ -34,18 +34,20 @@ struct GraphNode {
 };
 
 namespace GraphFeature{
-constexpr int EdgeFeatureCount = 18; // Update when adding new features, also update it in python code
+constexpr int EdgeFeatureCount = 9; // Update when adding new features, also update it in python code
 
-constexpr std::string LANE_COUNT = "laneCount";
-constexpr std::string ANGLE = "angle";
-constexpr std::string ONEWAY = "oneway";
-constexpr std::string SUGGESTED_FROM = "suggestedFrom";
-constexpr std::string SUGGESTED_TO = "suggestedTo";
-constexpr std::string SUGGESTED_TURN = "suggestedTurn";
-constexpr std::string ROUTE = "route"; // edge is part of the route
-constexpr std::string TYPE = "type";
-constexpr std::string USABLE = "usable"; // edge is usable by current vehicle
-constexpr std::string VIRTUAL = "virtual"; // edge is virtual (just for information propagation in GNN)
+// Per-highway features (same for all lane edges from same highway)
+inline const std::string LANE_COUNT = "laneCount";
+inline const std::string ANGLE = "angle";
+inline const std::string ROUTE = "route"; // edge is part of the route
+inline const std::string TYPE = "type";
+inline const std::string USABLE = "usable"; // edge is usable by current vehicle
+inline const std::string VIRTUAL = "virtual"; // edge is virtual (just for information propagation in GNN)
+
+// Per-lane features (specific to each lane edge)
+inline const std::string RELATIVE_LANE_POSITION = "relativeLanePosition"; // 0.0 (left) to 1.0 (right)
+inline const std::string LANE_TURN = "laneTurn"; // turn direction for this specific lane
+inline const std::string SUGGESTED = "suggested"; // binary: is this lane suggested for the route?
 
 std::string WayTypeName(int typeId);
 }

@@ -40,6 +40,12 @@ def main() -> None:
 
     # Load dataset
     dataset = JunctionGraphDataset(data_dir=args.data_dir)
+
+    # Load pos_weight from dataset metadata
+    feature_info = torch.load(dataset.processed_paths[1], weights_only=False)
+    pos_weight = feature_info.get('pos_weight', 1.0)
+    print(f"Using pos_weight={pos_weight:.2f} for handling class imbalance")
+
     indices = list(range(len(dataset)))
     random.shuffle(indices)
     val_size = int(len(indices) * args.val_ratio)
@@ -67,6 +73,7 @@ def main() -> None:
         val_loader=val_loader,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        pos_weight=pos_weight,
         log_dir=args.log_dir,
         save_dir=args.save_dir
     )

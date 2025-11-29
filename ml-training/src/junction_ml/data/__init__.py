@@ -14,10 +14,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-EdgeFeatureCount = 18
+EdgeFeatureCount = 9
 """
-Number of edge features including lane turns:
-length, laneCount, angle, oneway, route, type, usable, virtual, + 10 lane turns
+Number of edge features for lane-level representation:
+1. length
+2. laneCount (total lanes on highway)
+3. angle (turn angle at junction)
+4. route (highway is part of route)
+5. type (highway type)
+6. usable (lane/highway is usable)
+7. virtual (virtual reverse edge)
+8. relativeLanePosition (0.0=left, 1.0=right)
+9. laneTurn (turn direction for this lane)
 """
 
 NodeFeatureCount = 4
@@ -102,6 +110,19 @@ class JunctionGraphDataset(Dataset):
         if not data_list:
             raise ValueError("No valid junction graphs found!")
 
+        # Calculate class weights for handling imbalance
+        total_positive = 0
+        total_negative = 0
+        for data in data_list:
+            if hasattr(data, 'y_suggested'):
+                positive = (data.y_suggested > 0.5).sum().item()
+                total_positive += positive
+                total_negative += len(data.y_suggested) - positive
+
+        pos_weight = total_negative / max(1, total_positive) if total_positive > 0 else 1.0
+        logger.info(f"Dataset statistics: {total_positive} suggested lanes, {total_negative} non-suggested lanes")
+        logger.info(f"Calculated pos_weight for BCEWithLogitsLoss: {pos_weight:.2f}")
+
         # Fit feature scaler on all features
         if all_features:
             all_features_array = np.vstack(all_features)
@@ -120,7 +141,8 @@ class JunctionGraphDataset(Dataset):
         torch.save({
             'feature_scaler': self.feature_scaler,
             'label_encoders': self.label_encoders,
-            'feature_names': self.feature_names
+            'feature_names': self.feature_names,
+            'pos_weight': pos_weight
         }, self.processed_paths[1])
 
         logger.info(f"Processed {len(data_list)} junction graphs successfully")
@@ -156,7 +178,7 @@ class JunctionGraphDataset(Dataset):
         # Edge indices and features
         edge_indices = []
         edge_features = []
-        edge_labels: dict[str, list[Any]] = {'suggestedFrom': [], 'suggestedTo': [], 'suggestedTurn': []}
+        edge_labels: list[float] = []  # Single binary label: suggested or not
 
         for edge in edges:
             from_idx = node_id_to_idx.get(edge['from'])
@@ -167,31 +189,25 @@ class JunctionGraphDataset(Dataset):
 
             edge_indices.append([from_idx, to_idx])
 
-            # Extract edge features
+            # Extract new lane-level edge features (9 features)
             features = [
-                edge.get('length', 0.0),
-                edge.get('laneCount', 0.0),
-                edge.get('angle', 0.0),
-                edge.get('oneway', 0.0),
-                edge.get('route', 0.0),
-                edge.get('type', -1.0),
-                edge.get('usable', 0.0),
-                edge.get('virtual', 0.0)
+                edge.get('length', 0.0),           # 1. length
+                edge.get('laneCount', 0.0),        # 2. laneCount (total lanes on highway)
+                edge.get('angle', 0.0),            # 3. angle
+                edge.get('route', 0.0),            # 4. route (part of route)
+                edge.get('type', -1.0),            # 5. type (highway type)
+                edge.get('usable', 0.0),           # 6. usable
+                edge.get('virtual', 0.0),          # 7. virtual
+                edge.get('relativeLanePosition', 0.0),  # 8. relativeLanePosition (0.0=left, 1.0=right)
+                edge.get('laneTurn', -1.0)         # 9. laneTurn (single value for this lane)
             ]
-
-            # Add lane turn features (up to 10 lanes)
-            for i in range(10):
-                lane_turn_key = f'laneTurn{i}'
-                features.append(edge.get(lane_turn_key, -1.0))
 
             assert(len(features) == EdgeFeatureCount), f"Expected {EdgeFeatureCount} edge features, got {len(features)}"
 
             edge_features.append(features)
 
-            # Extract target labels
-            edge_labels['suggestedFrom'].append(edge.get('suggestedFrom', -1.0))
-            edge_labels['suggestedTo'].append(edge.get('suggestedTo', -1.0))
-            edge_labels['suggestedTurn'].append(edge.get('suggestedTurn', -1.0))
+            # Extract single binary target label: is this lane suggested?
+            edge_labels.append(edge.get('suggested', 0.0))
 
         if not edge_indices:
             return None
@@ -199,26 +215,19 @@ class JunctionGraphDataset(Dataset):
         edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
         edge_attr = torch.tensor(edge_features, dtype=torch.float32)
 
-        # Convert labels to tensors
-        y_suggested_from = torch.tensor(edge_labels['suggestedFrom'], dtype=torch.float32)
-        y_suggested_to = torch.tensor(edge_labels['suggestedTo'], dtype=torch.float32)
-        y_suggested_turn = torch.tensor(edge_labels['suggestedTurn'], dtype=torch.float32)
+        # Convert single binary label to tensor
+        y_suggested = torch.tensor(edge_labels, dtype=torch.float32)
 
-        # Create mask for valid labels (not -1)
-        valid_from = y_suggested_from >= 0
-        valid_to = y_suggested_to >= 0
-        valid_turn = y_suggested_turn >= 0
+        # Create mask for edges that are part of the route (have valid labels)
+        # Virtual edges and non-route edges will have suggested=0.0 but are still valid
+        valid_suggested = torch.ones_like(y_suggested, dtype=torch.bool)
 
         return Data(
             x=x,
             edge_index=edge_index,
             edge_attr=edge_attr,
-            y_suggested_from=y_suggested_from,
-            y_suggested_to=y_suggested_to,
-            y_suggested_turn=y_suggested_turn,
-            valid_from=valid_from,
-            valid_to=valid_to,
-            valid_turn=valid_turn,
+            y_suggested=y_suggested,
+            valid_suggested=valid_suggested,
             num_nodes=len(nodes)
         )
 
