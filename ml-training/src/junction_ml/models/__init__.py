@@ -84,12 +84,10 @@ class JunctionGNN(nn.Module):
             nn.Dropout(dropout)
         )
         
-        # Multi-task prediction heads
-        self.suggested_from_head = nn.Linear(hidden_dim // 2, 1)
-        self.suggested_to_head = nn.Linear(hidden_dim // 2, 1)
-        self.suggested_turn_head = nn.Linear(hidden_dim // 2, 1)
-        
-    def forward(self, data: Data) -> Dict[str, torch.Tensor]:
+        # Binary classification head: is this lane suggested?
+        self.suggested_head = nn.Linear(hidden_dim // 2, 1)
+
+    def forward(self, data: Data) -> torch.Tensor:
         """
         Forward pass of the model.
         
@@ -97,7 +95,7 @@ class JunctionGNN(nn.Module):
             data: PyTorch Geometric Data object
             
         Returns:
-            Dictionary with predictions for each task
+            Binary predictions for each edge (suggested or not)
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         batch = getattr(data, 'batch', None)

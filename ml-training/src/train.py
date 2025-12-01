@@ -46,6 +46,18 @@ def main() -> None:
     pos_weight = feature_info.get('pos_weight', 1.0)
     print(f"Using pos_weight={pos_weight:.2f} for handling class imbalance")
 
+    # Validate that dataset is in new format
+    if len(dataset) > 0:
+        sample = dataset[0]
+        if hasattr(sample, 'edge_attr') and sample.edge_attr is not None:
+            num_features = sample.edge_attr.shape[1] if len(sample.edge_attr.shape) > 1 else sample.edge_attr.shape[0]
+            if num_features != EdgeFeatureCount:
+                print(f"\n⚠️  WARNING: Dataset has {num_features} edge features, expected {EdgeFeatureCount}")
+                print("⚠️  Your dataset appears to be in the OLD format!")
+                print("⚠️  Please regenerate the dataset using the updated JunctionGraphExport tool:")
+                print("    ./cmake-build-debug/JunctionGraphExport --osm-data /path/to/map.osm --output tmp-junctions")
+                print("⚠️  Training will continue but may not work correctly.\n")
+
     indices = list(range(len(dataset)))
     random.shuffle(indices)
     val_size = int(len(indices) * args.val_ratio)

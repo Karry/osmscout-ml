@@ -180,6 +180,14 @@ class JunctionGraphDataset(Dataset):
         edge_features = []
         edge_labels: list[float] = []  # Single binary label: suggested or not
 
+        # Check if data is in new format (first edge should have new fields)
+        if edges and 'suggestedFrom' in edges[0]:
+            logger.warning(
+                f"⚠️  Graph {graph_data.get('id', 'unknown')} appears to be in OLD format! "
+                f"Found 'suggestedFrom' field instead of 'suggested'. "
+                f"Please regenerate dataset with updated JunctionGraphExport."
+            )
+
         for edge in edges:
             from_idx = node_id_to_idx.get(edge['from'])
             to_idx = node_id_to_idx.get(edge['to'])

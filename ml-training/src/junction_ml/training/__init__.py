@@ -395,8 +395,10 @@ class JunctionTrainer:
             # Log epoch summary
             logger.info(
                 f"Epoch {epoch}: "
-                f"Train Loss: {train_losses['total_loss']:.4f}, "
+                f"Train Loss: {train_losses['loss']:.4f}, "
+                f"Train Acc: {train_losses.get('accuracy', 0):.4f}, "
                 f"Val Loss: {current_val_loss:.4f}, "
+                f"Val F1: {val_losses.get('f1', 0):.4f}, "
                 f"Best Val Loss: {self.best_val_loss:.4f}"
             )
         
