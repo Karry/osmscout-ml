@@ -151,15 +151,18 @@ Transform the junction graph architecture from **edge-per-highway** to **edge-pe
 - [x] Pass pos_weight to create_trainer
 - [x] Update to work with new single-output model
 
-#### 4.2 Update Prediction Script (`ml-training/src/predict.py`) ⚠️
-- [ ] Update output processing for binary predictions
-- [ ] Modify visualization to show per-lane suggestions
-- [ ] Update evaluation metrics
+#### 4.2 Update Prediction Script (`ml-training/src/predict.py`) ✅
+- [x] Update output processing for binary predictions
+- [x] Modify visualization to show per-lane suggestions grouped by highway
+- [x] Update to work with new single binary prediction output
+- [x] Add human-readable display with lane positions and turn directions
 
-#### 4.3 Update Explanation Script (`ml-training/src/explain.py`) ⚠️
-- [ ] Update SHAP/explanation code for new features
-- [ ] Add visualization for lane-level predictions
-- [ ] Update feature importance analysis (now includes relativeLanePosition)
+#### 4.3 Update Explanation Script (`ml-training/src/explain.py`) ✅
+- [x] Update feature names for new 9-feature architecture
+- [x] Update gradient-based attribution for binary classification
+- [x] Update Captum attribution for single output
+- [x] Update feature importance analysis (now includes relativeLanePosition)
+- [x] Fix JSON output to work with new lane-level structure
 
 ---
 
