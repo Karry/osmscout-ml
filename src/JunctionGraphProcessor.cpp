@@ -335,7 +335,8 @@ void TraverseWay(const PostprocessorContext &context,
   assert(id < way->nodes.size());
   assert(id < std::numeric_limits<int64_t>::max());
 
-  auto laneDesc = context.GetLaneReader(dbId).GetValue(way->GetFeatureValueBuffer());
+  // auto laneDesc = context.GetLaneReader(dbId).GetValue(way->GetFeatureValueBuffer());
+  auto laneDesc = context.GetLanes(dbId, way, direction > 0);
   auto accessDesc = context.GetAccessReader(dbId).GetValue(way->GetFeatureValueBuffer());
 
   Distance distance;
@@ -368,19 +369,8 @@ void TraverseWay(const PostprocessorContext &context,
     }
 
     // Get lane information
-    int laneCount = 1; // Default to single lane
-    std::vector<LaneTurn> laneTurns;
-    bool hasLaneInfo = false;
-
-    if (laneDesc) {
-      laneCount = laneDesc->GetForwardLanes();
-      laneTurns = laneDesc->GetTurnForward();
-      hasLaneInfo = true;
-    } else {
-      // Missing lane information - print warning
-      log.Warn() << "Missing lane information for way " << way->GetObjectFileRef().GetName()
-                 << " at node " << from.GetId() << ", assuming single lane";
-    }
+    int laneCount = laneDesc.GetLaneCount();
+    std::vector<LaneTurn> laneTurns = laneDesc.GetLaneTurns();
 
     // Create one edge per lane
     for (int laneIndex = 0; laneIndex < laneCount; ++laneIndex) {
@@ -398,7 +388,7 @@ void TraverseWay(const PostprocessorContext &context,
       edge.features[GraphFeature::RELATIVE_LANE_POSITION] =
         (laneCount > 1) ? static_cast<double>(laneIndex) / static_cast<double>(laneCount - 1) : 0.0;
 
-      if (hasLaneInfo && laneIndex < laneTurns.size()) {
+      if (laneIndex < laneTurns.size()) {
         edge.features[GraphFeature::LANE_TURN] = static_cast<double>(laneTurns[laneIndex]);
       } else {
         edge.features[GraphFeature::LANE_TURN] = static_cast<double>(LaneTurn::Unknown);
