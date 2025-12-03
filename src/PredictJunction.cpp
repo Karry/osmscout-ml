@@ -176,11 +176,13 @@ void JunctionGraphPredictProcessor::ProcessJunctionGraph(const Graph &graph,
     }
 
     // Convert to PyTorch tensors
-    // Node features tensor [num_nodes, 2]
-    torch::Tensor nodeTensor = torch::zeros({static_cast<int64_t>(nodeFeatures.size()), 2});
+    // Node features tensor [num_nodes, 4] (lat, lon, incoming, outgoing)
+    const int nodeFeatureCount = 4;
+    torch::Tensor nodeTensor = torch::zeros({static_cast<int64_t>(nodeFeatures.size()), nodeFeatureCount});
     for (size_t i = 0; i < nodeFeatures.size(); ++i) {
-      nodeTensor[i][0] = nodeFeatures[i][0]; // lat
-      nodeTensor[i][1] = nodeFeatures[i][1]; // lon
+      for (int j = 0; j < nodeFeatureCount; ++j) {
+        nodeTensor[i][j] = nodeFeatures[i][j];
+      }
     }
 
     // Edge index tensor [2, num_edges] - PyTorch Geometric format
