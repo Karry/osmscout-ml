@@ -166,7 +166,8 @@ def captum_attribution(model: torch.nn.Module,
         
         predictions = model(new_data)
         # Single binary prediction per edge
-        return predictions[target_edge].unsqueeze(0)
+        result: Tensor = predictions[target_edge].unsqueeze(0)
+        return result
 
     # Initialize attribution method
     if method == 'integrated_gradients':

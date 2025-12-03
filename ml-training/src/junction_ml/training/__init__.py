@@ -69,7 +69,8 @@ class BinarySuggestedLoss(nn.Module):
         # Compute BCE loss only for valid edges
         loss = self.bce_loss(predictions[valid_mask], targets[valid_mask])
 
-        return loss.mean()
+        result: torch.Tensor = loss.mean()
+        return result
 
 
 class JunctionTrainer:
@@ -168,13 +169,13 @@ class JunctionTrainer:
             pbar.set_postfix({'loss': f"{loss.item():.4f}"})
 
         # Calculate metrics
-        avg_loss = np.mean(epoch_losses) if epoch_losses else 0.0
+        avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
         all_preds_np = np.array(all_preds)
         all_targets_np = np.array(all_targets)
 
         # Binary accuracy
         pred_binary = (all_preds_np > 0.5).astype(int)
-        accuracy = (pred_binary == all_targets_np).mean() if len(all_targets_np) > 0 else 0.0
+        accuracy = float((pred_binary == all_targets_np).mean()) if len(all_targets_np) > 0 else 0.0
 
         return {
             'loss': avg_loss,
@@ -216,20 +217,23 @@ class JunctionTrainer:
                 pbar.set_postfix({'loss': f"{loss.item():.4f}"})
 
         # Calculate metrics
-        avg_loss = np.mean(epoch_losses) if epoch_losses else 0.0
+        avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
         all_preds_np = np.array(all_preds)
         all_targets_np = np.array(all_targets)
 
         # Binary accuracy
         pred_binary = (all_preds_np > 0.5).astype(int)
-        accuracy = (pred_binary == all_targets_np).mean() if len(all_targets_np) > 0 else 0.0
+        accuracy = float((pred_binary == all_targets_np).mean()) if len(all_targets_np) > 0 else 0.0
 
         # Precision, recall, F1 for positive class (suggested lanes)
-        from sklearn.metrics import precision_recall_fscore_support
+        from sklearn.metrics import precision_recall_fscore_support  # type: ignore[import-untyped]
         if len(all_targets_np) > 0:
             precision, recall, f1, _ = precision_recall_fscore_support(
                 all_targets_np, pred_binary, average='binary', zero_division=0
             )
+            precision = float(precision)
+            recall = float(recall)
+            f1 = float(f1)
         else:
             precision, recall, f1 = 0.0, 0.0, 0.0
 

@@ -150,7 +150,7 @@ class JunctionGNN(nn.Module):
         edge_repr = self.edge_predictor(edge_features)
         
         # Binary classification: is this lane suggested?
-        suggested = self.suggested_head(edge_repr).squeeze(-1)
+        suggested: torch.Tensor = self.suggested_head(edge_repr).squeeze(-1)
 
         return suggested
 
@@ -294,7 +294,7 @@ class JunctionGNNTorchScript(nn.Module):
     def forward(self,
                 node_features: torch.Tensor,
                 edge_index: torch.Tensor,
-                edge_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                edge_features: torch.Tensor) -> torch.Tensor:
         """
         TorchScript-compatible forward pass.
 
@@ -304,7 +304,7 @@ class JunctionGNNTorchScript(nn.Module):
             edge_features: Edge features tensor [num_edges, edge_features]
 
         Returns:
-            Tuple of (suggested_from, suggested_to, suggested_turn) predictions
+            Binary predictions for each edge [num_edges]
         """
         x = node_features
 
@@ -340,6 +340,6 @@ class JunctionGNNTorchScript(nn.Module):
         edge_repr = self.gnn.edge_predictor(edge_features_concat)
 
         # Binary classification: is this lane suggested?
-        suggested = self.gnn.suggested_head(edge_repr).squeeze(-1)
+        suggested: torch.Tensor = self.gnn.suggested_head(edge_repr).squeeze(-1)
 
         return suggested
