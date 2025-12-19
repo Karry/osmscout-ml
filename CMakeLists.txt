@@ -49,4 +49,12 @@ if(Torch_FOUND)
     target_include_directories(PredictJunction PRIVATE src)
     set_property(TARGET PredictJunction PROPERTY CXX_STANDARD 20)
     target_link_libraries(PredictJunction PRIVATE OSMScout::OSMScout ${TORCH_LIBRARIES} RoutingUtils)
+
+    set(EVALUATE_JUNCTIONS_SOURCE_FILES
+        src/EvaluateJunctions.cpp
+    )
+    add_executable(EvaluateJunctions ${EVALUATE_JUNCTIONS_SOURCE_FILES})
+    target_include_directories(EvaluateJunctions PRIVATE src)
+    set_property(TARGET EvaluateJunctions PROPERTY CXX_STANDARD 20)
+    target_link_libraries(EvaluateJunctions PRIVATE OSMScout::OSMScout ${TORCH_LIBRARIES} RoutingUtils)
 endif()
