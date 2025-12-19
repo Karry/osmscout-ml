@@ -69,6 +69,7 @@ struct Graph {
   std::set<Id> nodeIdSet;
 
   void Export(const std::filesystem::path &filePath) const;
+  void Import(const std::filesystem::path &filePath);
 
   void Normalize();
 

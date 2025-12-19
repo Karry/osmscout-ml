@@ -164,6 +164,65 @@ void Graph::Export(const std::filesystem::path &filePath) const {
   file.close();
 }
 
+void Graph::Import(const std::filesystem::path &filePath) {
+  std::ifstream file(filePath);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file for reading: " + filePath.string());
+  }
+
+  nlohmann::json j;
+  file >> j;
+  file.close();
+
+  // Clear existing data
+  nodes.clear();
+  edges.clear();
+  nodeIdSet.clear();
+
+  // Import nodes
+  if (j.contains("nodes") && j["nodes"].is_array()) {
+    for (const auto& nodeJson : j["nodes"]) {
+      GraphNode node;
+      node.id = nodeJson["id"].get<Id>();
+      node.location = GeoCoord(
+        nodeJson["lat"].get<double>(),
+        nodeJson["lon"].get<double>()
+      );
+      node.normalizedLocation = GeoCoord(
+        nodeJson["normLat"].get<double>(),
+        nodeJson["normLon"].get<double>()
+      );
+      node.incoming = nodeJson["incoming"].get<int>();
+      node.outgoing = nodeJson["outgoing"].get<int>();
+
+      nodes.push_back(node);
+      nodeIdSet.insert(node.id);
+    }
+  }
+
+  // Import edges
+  if (j.contains("edges") && j["edges"].is_array()) {
+    for (const auto& edgeJson : j["edges"]) {
+      GraphEdge edge;
+      edge.fromNode = edgeJson["from"].get<Id>();
+      edge.toNode = edgeJson["to"].get<Id>();
+      edge.length = Meters(edgeJson["length"].get<double>());
+
+      // Import all features (all other fields in the edge object)
+      for (auto it = edgeJson.begin(); it != edgeJson.end(); ++it) {
+        const std::string& key = it.key();
+        // Skip the structural fields, only import feature fields
+        if (key != "from" && key != "to" && key != "length") {
+          edge.features[key] = it.value().get<double>();
+        }
+      }
+
+      edges.push_back(edge);
+    }
+  }
+}
+
+
 namespace GraphFeature {
 static const std::vector<std::string> wayTypes = {
   "highway_motorway",
