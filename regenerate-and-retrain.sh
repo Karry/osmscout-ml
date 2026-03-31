@@ -1,5 +1,5 @@
 #!/bin/bash -xe
-cd /home/karry/data/cecko/OSM/osmscout-ml/
+cd $(dirname "$0")
 
 rm -rf ./tmp-junctions
 rm -rf "./???"
