@@ -44,7 +44,8 @@ RUN git clone https://github.com/Framstag/libosmscout.git && \
     cd ../.. && rm -rf libosmscout
 
 # Copy the project files
-COPY . /workspace/osmscout-ml
+COPY src /workspace/osmscout-ml/src
+COPY CMakeLists.txt /workspace/osmscout-ml/
 
 # Build the C++ project
 WORKDIR /workspace/osmscout-ml
