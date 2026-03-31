@@ -73,6 +73,164 @@ class BinarySuggestedLoss(nn.Module):
         return result
 
 
+class FocalSuggestedLoss(nn.Module):
+    """
+    Focal loss for lane suggestion prediction.
+
+    Down-weights easy/confident examples so the model focuses on hard,
+    misclassified lanes. Particularly effective for the class imbalance
+    between suggested and non-suggested lanes.
+
+    Reference: Lin et al., "Focal Loss for Dense Object Detection", 2017.
+    """
+
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, pos_weight: float = 1.0):
+        """
+        Initialize focal loss.
+
+        Args:
+            alpha: Balancing factor for positive class (0-1). Higher values
+                   increase weight of positive (suggested) samples.
+            gamma: Focusing parameter. Higher values down-weight easy examples
+                   more aggressively. gamma=0 reduces to standard BCE.
+            pos_weight: Additional positive class weight (applied on top of alpha).
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.pos_weight = pos_weight
+
+        logger.info(
+            f"Initialized FocalSuggestedLoss with alpha={alpha:.2f}, "
+            f"gamma={gamma:.2f}, pos_weight={pos_weight:.2f}"
+        )
+
+    def forward(self,
+                predictions: torch.Tensor,
+                targets: torch.Tensor,
+                valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Compute focal loss.
+
+        Args:
+            predictions: Model predictions (logits) [num_edges]
+            targets: Ground truth binary labels [num_edges]
+            valid_mask: Optional mask indicating valid labels [num_edges]
+
+        Returns:
+            Scalar loss value
+        """
+        if valid_mask is None:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device)
+
+        logits = predictions[valid_mask]
+        labels = targets[valid_mask]
+
+        # Compute probabilities via sigmoid
+        p = torch.sigmoid(logits)
+        # p_t = p for positive samples, (1-p) for negative samples
+        p_t = p * labels + (1.0 - p) * (1.0 - labels)
+
+        # Focal modulating factor: (1 - p_t)^gamma
+        focal_weight = (1.0 - p_t) ** self.gamma
+
+        # Alpha balancing: alpha for positives, (1-alpha) for negatives
+        alpha_weight = self.alpha * labels + (1.0 - self.alpha) * (1.0 - labels)
+
+        # Apply pos_weight as additional scaling for positives
+        class_weight = self.pos_weight * labels + 1.0 * (1.0 - labels)
+
+        # Standard BCE per element (no reduction)
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, labels, reduction='none'
+        )
+
+        loss = focal_weight * alpha_weight * class_weight * bce
+
+        result: torch.Tensor = loss.mean()
+        return result
+
+
+class DiceSuggestedLoss(nn.Module):
+    """
+    Soft Dice loss for lane suggestion prediction.
+
+    Directly optimizes the overlap (Dice/F1 coefficient) between predicted
+    and target sets. Naturally handles class imbalance because a single
+    correct positive matters a lot when positives are rare.
+
+    Optionally combined with BCE for gradient stability (``bce_weight > 0``).
+    """
+
+    def __init__(self, smooth: float = 1.0, bce_weight: float = 0.5, pos_weight: float = 1.0):
+        """
+        Initialize Dice loss.
+
+        Args:
+            smooth: Smoothing constant to avoid division by zero and stabilize
+                    gradients when both prediction and target are near-empty.
+            bce_weight: Weight of an auxiliary BCE term added to the Dice loss
+                        for gradient stability.  0 = pure Dice, 1 = equal mix.
+            pos_weight: Positive-class weight forwarded to the auxiliary BCE term.
+        """
+        super().__init__()
+        self.smooth = smooth
+        self.bce_weight = bce_weight
+        self.pos_weight = pos_weight
+
+        logger.info(
+            f"Initialized DiceSuggestedLoss with smooth={smooth:.2f}, "
+            f"bce_weight={bce_weight:.2f}, pos_weight={pos_weight:.2f}"
+        )
+
+    def forward(self,
+                predictions: torch.Tensor,
+                targets: torch.Tensor,
+                valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Compute Dice loss (optionally combined with BCE).
+
+        Args:
+            predictions: Model predictions (logits) [num_edges]
+            targets: Ground truth binary labels [num_edges]
+            valid_mask: Optional mask indicating valid labels [num_edges]
+
+        Returns:
+            Scalar loss value
+        """
+        if valid_mask is None:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device)
+
+        logits = predictions[valid_mask]
+        labels = targets[valid_mask]
+
+        # Soft predictions via sigmoid
+        probs = torch.sigmoid(logits)
+
+        # Soft Dice coefficient: 2 * |P ∩ T| / (|P| + |T|)
+        intersection = (probs * labels).sum()
+        dice_coeff = (2.0 * intersection + self.smooth) / (probs.sum() + labels.sum() + self.smooth)
+        dice_loss = 1.0 - dice_coeff
+
+        if self.bce_weight > 0.0:
+            # Auxiliary weighted BCE for gradient stability
+            weight = torch.where(labels == 1.0, self.pos_weight, 1.0)
+            bce = nn.functional.binary_cross_entropy_with_logits(
+                logits, labels, weight=weight, reduction='mean'
+            )
+            result: torch.Tensor = dice_loss + self.bce_weight * bce
+        else:
+            result = dice_loss
+
+        return result
+
+
 class JunctionTrainer:
     """
     Trainer class for junction lane prediction models.
@@ -83,7 +241,7 @@ class JunctionTrainer:
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  optimizer: optim.Optimizer,
-                 criterion: BinarySuggestedLoss,
+                 criterion: nn.Module,
                  device: torch.device,
                  log_dir: str = 'runs',
                  save_dir: str = 'checkpoints',
@@ -417,6 +575,11 @@ def create_trainer(model: JunctionGNN,
                    weight_decay: float = 1e-5,
                    pos_weight: Optional[float] = None,
                    device: Optional[torch.device] = None,
+                   loss_type: str = "bce",
+                   focal_alpha: float = 0.25,
+                   focal_gamma: float = 2.0,
+                   dice_smooth: float = 1.0,
+                   dice_bce_weight: float = 0.5,
                    **trainer_kwargs: Any) -> JunctionTrainer:
     """
     Create a trainer instance with default configurations.
@@ -429,6 +592,11 @@ def create_trainer(model: JunctionGNN,
         weight_decay: Weight decay for optimizer
         pos_weight: Weight for positive class in BCE loss (for class imbalance)
         device: Device to train on
+        loss_type: Loss function to use: "bce" (default), "focal", or "dice"
+        focal_alpha: Alpha parameter for focal loss (balancing factor, 0-1)
+        focal_gamma: Gamma parameter for focal loss (focusing parameter, >=0)
+        dice_smooth: Smoothing constant for Dice loss
+        dice_bce_weight: Weight of auxiliary BCE term in Dice loss (0 = pure Dice)
         **trainer_kwargs: Additional arguments for trainer
         
     Returns:
@@ -447,7 +615,23 @@ def create_trainer(model: JunctionGNN,
         pos_weight = 1.0
         logger.warning("pos_weight not provided, using default value of 1.0")
 
-    criterion = BinarySuggestedLoss(pos_weight=pos_weight)
+    criterion: nn.Module
+    if loss_type == "focal":
+        criterion = FocalSuggestedLoss(
+            alpha=focal_alpha,
+            gamma=focal_gamma,
+            pos_weight=pos_weight,
+        )
+    elif loss_type == "dice":
+        criterion = DiceSuggestedLoss(
+            smooth=dice_smooth,
+            bce_weight=dice_bce_weight,
+            pos_weight=pos_weight,
+        )
+    elif loss_type == "bce":
+        criterion = BinarySuggestedLoss(pos_weight=pos_weight)
+    else:
+        raise ValueError(f"Unknown loss_type '{loss_type}'. Expected 'bce', 'focal', or 'dice'.")
 
     # Create trainer
     trainer = JunctionTrainer(
