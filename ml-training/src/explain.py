@@ -38,11 +38,10 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Feature names for better interpretability
+# Feature names for better interpretability (9 features for lane-level architecture)
 EDGE_FEATURE_NAMES = [
-    'length', 'laneCount', 'angle', 'oneway', 'route', 'type', 'usable', "virtual",
-    "laneTurn0", "laneTurn1", "laneTurn2", "laneTurn3", "laneTurn4", "laneTurn5",
-    "laneTurn6", "laneTurn7", "laneTurn8", "laneTurn9"
+    'length', 'laneCount', 'angle', 'route', 'type', 'usable', 'virtual',
+    'relativeLanePosition', 'laneTurn'
 ]
 
 NODE_FEATURE_NAMES = [
@@ -125,14 +124,9 @@ def gradient_based_attribution(model: torch.nn.Module,
     # Forward pass
     predictions = model(data)
     
-    # Select the target prediction
-    if isinstance(predictions, dict):
-        output_names = ['suggested_from', 'suggested_to', 'suggested_turn']
-        target_logit = predictions[output_names[target_output]][target_edge]
-    else:
-        # Assume predictions is a tuple
-        target_logit = predictions[target_output][target_edge]
-    
+    # Select the target prediction (single binary output per edge)
+    target_logit = predictions[target_edge]
+
     # Backward pass
     target_logit.backward()
     
@@ -164,19 +158,17 @@ def captum_attribution(model: torch.nn.Module,
     if not HAS_CAPTUM:
         return gradient_based_attribution(model, data, target_edge, target_output)
     
-    def forward_func(node_feat: int, edge_feat: int) -> Any:
+    def forward_func(node_feat: Tensor, edge_feat: Tensor) -> Tensor:
         # Create a new data object with modified features
         new_data = data.clone()
         new_data.x = node_feat
         new_data.edge_attr = edge_feat
         
         predictions = model(new_data)
-        if isinstance(predictions, dict):
-            output_names = ['suggested_from', 'suggested_to', 'suggested_turn']
-            return predictions[output_names[target_output]][target_edge].unsqueeze(0)
-        else:
-            return predictions[target_output][target_edge].unsqueeze(0)
-    
+        # Single binary prediction per edge
+        result: Tensor = predictions[target_edge].unsqueeze(0)
+        return result
+
     # Initialize attribution method
     if method == 'integrated_gradients':
         attr_method = IntegratedGradients(forward_func)
@@ -264,28 +256,19 @@ def explain_junction(model: Union[torch.nn.Module, torch.jit.ScriptModule],
             predictions = model(data)
         else:
             predictions = model(data.x, data.edge_index, data.edge_attr)
-            if isinstance(predictions, tuple):
-                predictions = {
-                    'suggested_from': predictions[0],
-                    'suggested_to': predictions[1], 
-                    'suggested_turn': predictions[2]
-                }
-    
-    # Apply sigmoid to binary predictions
-    suggested_from = torch.sigmoid(predictions['suggested_from']).cpu().numpy()
-    suggested_to = torch.sigmoid(predictions['suggested_to']).cpu().numpy()
-    suggested_turn = predictions['suggested_turn'].cpu().numpy()
-    
+
+    # Apply sigmoid to get probabilities for binary classification
+    suggested_probs = torch.sigmoid(predictions).cpu().numpy()
+
     # Prepare results structure
     results: Dict[str, Any] = {
         'predictions': {
-            'suggestedFrom': suggested_from.tolist(),
-            'suggestedTo': suggested_to.tolist(),
-            'suggestedTurn': suggested_turn.tolist()
+            'suggested': suggested_probs.tolist()
         },
         'metadata': {
             'num_nodes': len(json_data['nodes']),
             'num_edges': len(json_data['edges']),
+            'num_lane_edges': sum(1 for e in json_data['edges'] if e.get('virtual', 0.0) < 0.5),
             'explanation_method': method,
             'top_k_features': top_k
         },
@@ -296,92 +279,83 @@ def explain_junction(model: Union[torch.nn.Module, torch.jit.ScriptModule],
     if hasattr(model, '_c'):
         logger.warning("Attribution may not work properly with TorchScript models")
     
-    # Explain each edge prediction
+    # Explain each lane edge prediction (skip virtual edges)
     for edge_idx in range(len(json_data['edges'])):
         edge = json_data['edges'][edge_idx]
         
+        # Skip virtual edges (convert to float to avoid numpy array issues)
+        if float(edge.get('virtual', 0.0)) > 0.5:
+            continue
+
         edge_explanation = {
             'edge_index': edge_idx,
             'from': edge['from'],
             'to': edge['to'],
-            'predictions': {
-                'suggestedFrom': float(suggested_from[edge_idx]),
-                'suggestedTo': float(suggested_to[edge_idx]),
-                'suggestedTurn': float(suggested_turn[edge_idx])
-            },
-            'feature_importance': {},
-            'edge_importance': {}
+            'lane_position': edge.get('relativeLanePosition', -1.0),
+            'lane_turn': edge.get('laneTurn', -1.0),
+            'predicted_suggested': float(suggested_probs[edge_idx]),
+            'predicted_binary': bool(suggested_probs[edge_idx] > 0.5),
+            'ground_truth': edge.get('suggested', None),
+            'feature_importance': {}
         }
         
-        # Compute attributions for each output
-        for output_idx, output_name in enumerate(['suggestedFrom', 'suggestedTo', 'suggestedTurn']):
-            try:
-                if method == 'gnn_explainer':
-                    node_attr, edge_attr = pyg_explainer_attribution(model, data, edge_idx)
-                elif method in ['integrated_gradients', 'saliency'] and HAS_CAPTUM:
-                    node_attr, edge_attr = captum_attribution(model, data, edge_idx, output_idx, method)
-                else:
-                    node_attr, edge_attr = gradient_based_attribution(model, data, edge_idx, output_idx)
-                
-                if node_attr is not None and edge_attr is not None:
-                    # Node feature importance (aggregate across all nodes)
-                    node_importance = node_attr.mean(dim=0)  # Average across nodes
-                    top_node_features = torch.topk(node_importance, min(top_k, len(node_importance)))
-                    
-                    # Edge feature importance (for this specific edge)
-                    edge_importance = edge_attr[edge_idx] if edge_idx < edge_attr.size(0) else edge_attr.mean(dim=0)
-                    top_edge_features = torch.topk(edge_importance, min(top_k, len(edge_importance)))
-                    
-                    # Store feature importance
-                    edge_explanation['feature_importance'][output_name] = {
-                        'node_features': [
-                            {
-                                'feature_name': NODE_FEATURE_NAMES[idx] if idx < len(NODE_FEATURE_NAMES) else f'node_feat_{idx}',
-                                'importance': float(importance),
-                                'feature_index': int(idx)
-                            }
-                            for idx, importance in zip(top_node_features.indices, top_node_features.values)
-                        ],
-                        'edge_features': [
-                            {
-                                'feature_name': EDGE_FEATURE_NAMES[idx] if idx < len(EDGE_FEATURE_NAMES) else f'edge_feat_{idx}',
-                                'importance': float(importance),
-                                'feature_index': int(idx)
-                            }
-                            for idx, importance in zip(top_edge_features.indices, top_edge_features.values)
-                        ]
-                    }
-                    
-                    # Store edge importance (which edges in the graph are important)
-                    if edge_attr.dim() > 1:
-                        graph_edge_importance = edge_attr.mean(dim=1)  # Average across feature dimensions
-                        top_edges = torch.topk(graph_edge_importance, min(top_k, len(graph_edge_importance)))
-                        
-                        edge_explanation['edge_importance'][output_name] = [
-                            {
-                                'edge_index': int(idx),
-                                'importance': float(importance),
-                                'from_node': int(data.edge_index[0, idx]) if idx < data.edge_index.size(1) else -1,
-                                'to_node': int(data.edge_index[1, idx]) if idx < data.edge_index.size(1) else -1
-                            }
-                            for idx, importance in zip(top_edges.indices, top_edges.values)
-                        ]
-                
-            except Exception as e:
-                logger.warning(f"Attribution failed for edge {edge_idx}, output {output_name}: {e}")
-                edge_explanation['feature_importance'][output_name] = {'error': str(e)}
-        
-        # Add original edge features for context
-        edge_explanation['features'] = {
-            'length': edge.get('length', 0),
-            'laneCount': edge.get('laneCount', 0),
-            'angle': edge.get('angle', 0),
-            'oneway': edge.get('oneway', 0),
-            'route': edge.get('route', 0),
-            'type': edge.get('type', -1),
-            'usable': edge.get('usable', 0)
-        }
-        
+        # Compute attributions for the binary prediction
+        try:
+            if method == 'gnn_explainer':
+                node_attr, edge_attr = pyg_explainer_attribution(model, data, edge_idx)
+            elif method in ['integrated_gradients', 'saliency'] and HAS_CAPTUM:
+                node_attr, edge_attr = captum_attribution(model, data, edge_idx, 0, method)
+            else:
+                node_attr, edge_attr = gradient_based_attribution(model, data, edge_idx, 0)
+
+            if node_attr is not None and edge_attr is not None:
+                # Node feature importance (aggregate across all nodes)
+                node_importance = node_attr.mean(dim=0)  # Average across nodes
+                top_node_features = torch.topk(node_importance, min(top_k, len(node_importance)))
+
+                # Edge feature importance (9 features in new architecture)
+                edge_importance = edge_attr[edge_idx] if edge_idx < edge_attr.size(0) else edge_attr.mean(dim=0)
+                top_edge_features = torch.topk(edge_importance, min(top_k, len(edge_importance)))
+
+                # Store feature importance
+                edge_explanation['feature_importance'] = {
+                    'node_features': [
+                        {
+                            'feature_name': NODE_FEATURE_NAMES[idx] if idx < len(NODE_FEATURE_NAMES) else f'node_feat_{idx}',
+                            'importance': float(importance),
+                            'feature_index': int(idx)
+                        }
+                        for idx, importance in zip(top_node_features.indices, top_node_features.values)
+                    ],
+                    'edge_features': [
+                        {
+                            'feature_name': EDGE_FEATURE_NAMES[idx] if idx < len(EDGE_FEATURE_NAMES) else f'edge_feat_{idx}',
+                            'importance': float(importance),
+                            'feature_index': int(idx)
+                        }
+                        for idx, importance in zip(top_edge_features.indices, top_edge_features.values)
+                    ]
+                }
+
+                # Store edge importance (which edges in the graph contribute to this prediction)
+                if edge_attr.dim() > 1:
+                    graph_edge_importance = edge_attr.mean(dim=1)  # Average across feature dimensions
+                    top_edges = torch.topk(graph_edge_importance, min(top_k, len(graph_edge_importance)))
+
+                    edge_explanation['important_graph_edges'] = [
+                        {
+                            'edge_index': int(idx),
+                            'importance': float(importance),
+                            'from_node': int(data.edge_index[0, idx]) if idx < data.edge_index.size(1) else -1,
+                            'to_node': int(data.edge_index[1, idx]) if idx < data.edge_index.size(1) else -1
+                        }
+                        for idx, importance in zip(top_edges.indices, top_edges.values)
+                    ]
+
+        except Exception as e:
+            logger.warning(f"Attribution failed for edge {edge_idx}: {e}")
+            edge_explanation['feature_importance'] = {'error': str(e)}
+
         results['explanations'].append(edge_explanation)
     
     return results

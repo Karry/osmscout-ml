@@ -25,6 +25,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--dropout', type=float, default=0.1, help="Dropout rate")
     parser.add_argument('--val-ratio', type=float, default=0.1, help="Validation split ratio")
     parser.add_argument('--seed', type=int, default=42, help="Random seed")
+    parser.add_argument('--loss', type=str, default='bce', choices=['bce', 'focal', 'dice'],
+                        help="Loss function: 'bce' (default), 'focal', or 'dice'")
+    parser.add_argument('--focal-alpha', type=float, default=0.25,
+                        help="Focal loss alpha (positive class balance, 0-1). Default 0.25")
+    parser.add_argument('--focal-gamma', type=float, default=2.0,
+                        help="Focal loss gamma (focusing parameter, >=0). Default 2.0")
+    parser.add_argument('--dice-smooth', type=float, default=1.0,
+                        help="Dice loss smoothing constant. Default 1.0")
+    parser.add_argument('--dice-bce-weight', type=float, default=0.5,
+                        help="Weight of auxiliary BCE term in Dice loss (0=pure Dice). Default 0.5")
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
     return parser.parse_args()
 
@@ -40,6 +50,24 @@ def main() -> None:
 
     # Load dataset
     dataset = JunctionGraphDataset(data_dir=args.data_dir)
+
+    # Load pos_weight from dataset metadata
+    feature_info = torch.load(dataset.processed_paths[1], weights_only=False)
+    pos_weight = feature_info.get('pos_weight', 1.0)
+    print(f"Using pos_weight={pos_weight:.2f} for handling class imbalance")
+
+    # Validate that dataset is in new format
+    if len(dataset) > 0:
+        sample = dataset[0]
+        if hasattr(sample, 'edge_attr') and sample.edge_attr is not None:
+            num_features = sample.edge_attr.shape[1] if len(sample.edge_attr.shape) > 1 else sample.edge_attr.shape[0]
+            if num_features != EdgeFeatureCount:
+                print(f"\n⚠️  WARNING: Dataset has {num_features} edge features, expected {EdgeFeatureCount}")
+                print("⚠️  Your dataset appears to be in the OLD format!")
+                print("⚠️  Please regenerate the dataset using the updated JunctionGraphExport tool:")
+                print("    ./cmake-build-debug/JunctionGraphExport --osm-data /path/to/map.osm --output tmp-junctions")
+                print("⚠️  Training will continue but may not work correctly.\n")
+
     indices = list(range(len(dataset)))
     random.shuffle(indices)
     val_size = int(len(indices) * args.val_ratio)
@@ -67,6 +95,12 @@ def main() -> None:
         val_loader=val_loader,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        pos_weight=pos_weight,
+        loss_type=args.loss,
+        focal_alpha=args.focal_alpha,
+        focal_gamma=args.focal_gamma,
+        dice_smooth=args.dice_smooth,
+        dice_bce_weight=args.dice_bce_weight,
         log_dir=args.log_dir,
         save_dir=args.save_dir
     )

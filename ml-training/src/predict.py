@@ -104,72 +104,73 @@ def predict_junction(model: Union[torch.nn.Module, torch.jit.ScriptModule],
         else:
             # TorchScript model - pass individual tensors
             predictions = model(data.x, data.edge_index, data.edge_attr)
-            
-            # Convert tuple output to dictionary format
-            if isinstance(predictions, tuple):
-                predictions = {
-                    'suggested_from': predictions[0],
-                    'suggested_to': predictions[1], 
-                    'suggested_turn': predictions[2]
-                }
-    
-    # Apply sigmoid to binary predictions
-    suggested_from = torch.sigmoid(predictions['suggested_from']).cpu().numpy()
-    suggested_to = torch.sigmoid(predictions['suggested_to']).cpu().numpy()
-    suggested_turn = predictions['suggested_turn'].cpu().numpy()
-    
+
+    # Apply sigmoid to get probabilities for binary classification
+    suggested_probs = torch.sigmoid(predictions).cpu().numpy()
+
+    # Group edges by highway (from-to node pair) for better visualization
+    edges_by_highway: Dict[str, List[tuple]] = {}
+    for i, edge in enumerate(json_data['edges']):
+        if edge.get('virtual', 0.0) > 0.5:
+            continue  # Skip virtual edges
+        highway_key = f"{edge['from']}->{edge['to']}"
+        if highway_key not in edges_by_highway:
+            edges_by_highway[highway_key] = []
+        edges_by_highway[highway_key].append((i, edge))
+
     # Prepare results
     results: Dict[str, Any] = {
         'predictions': {
-            'suggestedFrom': suggested_from.tolist(),
-            'suggestedTo': suggested_to.tolist(),
-            'suggestedTurn': suggested_turn.tolist()
+            'suggested': suggested_probs.tolist()
         },
         'metadata': {
             'num_nodes': len(json_data['nodes']),
             'num_edges': len(json_data['edges']),
+            'num_lane_edges': sum(1 for e in json_data['edges'] if e.get('virtual', 0.0) < 0.5),
             'model_type': 'torchscript' if hasattr(model, '_c') else 'pytorch'
         },
-        'edges': []
+        'highways': []
     }
     
-    # Add edge information for easier interpretation
-    for i, edge in enumerate(json_data['edges']):
-        edge_result = {
-            'from': edge['from'],
-            'to': edge['to'],
-            'predictions': {
-                'suggestedFrom': float(suggested_from[i]),
-                'suggestedTo': float(suggested_to[i]),
-                'suggestedTurn': float(suggested_turn[i])
+    # Group predictions by highway for easier interpretation
+    for highway_key, lane_edges in edges_by_highway.items():
+        # Extract from and to nodes from the first edge in this highway
+        first_edge = lane_edges[0][1]
+        highway_result = {
+            'from_node': first_edge['from'],
+            'to_node': first_edge['to'],
+            'lanes': []
+        }
+        
+        for i, edge in lane_edges:
+            lane_result = {
+                'lane_position': edge.get('relativeLanePosition', -1.0),
+                'lane_turn': edge.get('laneTurn', -1.0),
+                'predicted_suggested': float(suggested_probs[i]),
+                'predicted_binary': bool(suggested_probs[i] > 0.5),
             }
-        }
-        
-        # Add original features for comparison if available
-        original_features = {}
-        if 'suggestedFrom' in edge:
-            original_features['suggestedFrom'] = edge['suggestedFrom']
-        if 'suggestedTo' in edge:
-            original_features['suggestedTo'] = edge['suggestedTo']
-        if 'suggestedTurn' in edge:
-            original_features['suggestedTurn'] = edge['suggestedTurn']
-        
-        if original_features:
-            edge_result['ground_truth'] = original_features
-            
-        # Add other edge features for context
-        edge_result['features'] = {
-            'length': edge.get('length', 0),
-            'laneCount': edge.get('laneCount', 0),
-            'angle': edge.get('angle', 0),
-            'oneway': edge.get('oneway', 0),
-            'route': edge.get('route', 0),
-            'type': edge.get('type', -1),
-            'usable': edge.get('usable', 0)
-        }
-        
-        results['edges'].append(edge_result)
-    
+
+            # Add ground truth if available
+            if 'suggested' in edge:
+                lane_result['ground_truth_suggested'] = float(edge['suggested'])
+
+            # Add highway-level features (same for all lanes)
+            if not highway_result.get('features'):
+                highway_result['features'] = {
+                    'length': edge.get('length', 0),
+                    'total_lanes': edge.get('laneCount', 0),
+                    'angle': edge.get('angle', 0),
+                    'route': edge.get('route', 0),
+                    'type': edge.get('type', -1),
+                    'usable': edge.get('usable', 0)
+                }
+
+            highway_result['lanes'].append(lane_result)
+
+        # Sort lanes by position
+        highway_result['lanes'].sort(key=lambda x: x['lane_position'])
+        results['highways'].append(highway_result)
+
     return results
 
 
@@ -218,6 +219,78 @@ def predict_multiple_files(model: Union[torch.nn.Module, torch.jit.ScriptModule]
             json.dump(all_results, f, indent=2)
     
     return all_results
+
+
+def print_predictions(result: Dict[str, Any]) -> None:
+    """Print predictions in a human-readable format."""
+    print("\n" + "="*80)
+    print("JUNCTION LANE PREDICTIONS")
+    print("="*80)
+
+    metadata = result['metadata']
+    print(f"\nMetadata:")
+    print(f"  Nodes: {metadata['num_nodes']}")
+    print(f"  Total edges: {metadata['num_edges']}")
+    print(f"  Lane edges: {metadata['num_lane_edges']}")
+    print(f"  Model type: {metadata['model_type']}")
+
+    # Lane turn mapping
+    lane_turn_names = {
+        -1.0: "Unknown",
+        0.0: "None",
+        1.0: "Slight-Left",
+        2.0: "Left",
+        3.0: "Sharp-Left",
+        4.0: "U-Turn",
+        15.0: "Slight-Right",
+        16.0: "Right",
+        17.0: "Through",
+        18.0: "Sharp-Right"
+    }
+
+    print(f"\n{'='*80}")
+    print("HIGHWAYS AND LANES")
+    print("="*80)
+
+    for highway in result['highways']:
+        print(f"\n--- Highway: Node {highway['from_node']} → Node {highway['to_node']} ---")
+
+        features = highway.get('features', {})
+        print(f"  Length: {features.get('length', 0):.1f}m")
+        print(f"  Total lanes: {int(features.get('total_lanes', 0))}")
+        print(f"  Angle: {features.get('angle', 0):.1f}°")
+        print(f"  On route: {'Yes' if features.get('route', 0) > 0.5 else 'No'}")
+
+        print(f"\n  Lanes:")
+        for lane in highway['lanes']:
+            pos = lane['lane_position']
+            turn = lane['lane_turn']
+            pred = lane['predicted_suggested']
+            is_suggested = lane['predicted_binary']
+
+            # Position label
+            if pos < 0.33:
+                pos_label = "LEFT "
+            elif pos > 0.67:
+                pos_label = "RIGHT"
+            else:
+                pos_label = "MID  "
+
+            # Turn name
+            turn_name = lane_turn_names.get(turn, f"Unknown({turn})")
+
+            # Suggestion indicator
+            indicator = "✓ SUGGESTED" if is_suggested else "  not suggested"
+
+            print(f"    Lane {pos:.2f} ({pos_label}): {turn_name:15s} → {pred:.3f} {indicator}")
+
+            # Show ground truth if available
+            if 'ground_truth_suggested' in lane:
+                gt = lane['ground_truth_suggested']
+                gt_label = "✓ CORRECT" if (gt > 0.5) == is_suggested else "✗ WRONG"
+                print(f"      Ground truth: {gt:.1f} ({gt_label})")
+
+    print("\n" + "="*80)
 
 
 def parse_args() -> argparse.Namespace:
@@ -324,9 +397,9 @@ def main() -> None:
                 json.dump(result, f, indent=2)
             logger.info(f"Results saved to {args.output}")
         else:
-            # Print results to stdout
-            print(json.dumps(result, indent=2))
-    
+            # Print human-readable results
+            print_predictions(result)
+
     else:
         # Multiple files or batch processing
         logger.info(f"Processing {len(input_files)} files")

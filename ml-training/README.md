@@ -26,6 +26,7 @@ source .venv/bin/activate
 
 2. Install dependencies:
 ```bash
+pip install poetry==2.1.3
 poetry install
 ```
 

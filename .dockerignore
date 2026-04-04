@@ -1,0 +1,39 @@
+# Build directories
+build/
+cmake-build-*/
+.venv/
+ml-training/.venv/
+__pycache__/
+*.pyc
+
+# Output directories
+tmp-junctions/
+ml-training/output/
+ml-training/runs/
+ml-training/processed/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation (optional - remove if you want docs in container)
+# docs/
+
+# Large data files
+*.osm
+*.osm.pbf
+*.map
+
+# Python virtual environments
+venv/
+env/
+
+# Logs
+*.log
+

@@ -147,6 +147,13 @@ void Graph::Export(const std::filesystem::path &filePath) const {
       {"outgoing", node.outgoing}
     });
   }
+  if (junctionStart) {
+    j["junctionStart"] = *junctionStart;
+  }
+  if (junctionEnd) {
+    j["junctionEnd"] = *junctionEnd;
+  }
+
   // Export edges
   j["edges"] = nlohmann::json::array();
   for (const auto& edge : edges) {
@@ -163,6 +170,72 @@ void Graph::Export(const std::filesystem::path &filePath) const {
   file << j.dump(2) << std::endl;
   file.close();
 }
+
+void Graph::Import(const std::filesystem::path &filePath) {
+  std::ifstream file(filePath);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file for reading: " + filePath.string());
+  }
+
+  nlohmann::json j;
+  file >> j;
+  file.close();
+
+  // Clear existing data
+  nodes.clear();
+  edges.clear();
+  nodeIdSet.clear();
+
+  // Import nodes
+  if (j.contains("nodes") && j["nodes"].is_array()) {
+    for (const auto& nodeJson : j["nodes"]) {
+      GraphNode node;
+      node.id = nodeJson["id"].get<Id>();
+      node.location = GeoCoord(
+        nodeJson["lat"].get<double>(),
+        nodeJson["lon"].get<double>()
+      );
+      node.normalizedLocation = GeoCoord(
+        nodeJson["normLat"].get<double>(),
+        nodeJson["normLon"].get<double>()
+      );
+      node.incoming = nodeJson["incoming"].get<int>();
+      node.outgoing = nodeJson["outgoing"].get<int>();
+
+      nodes.push_back(node);
+      nodeIdSet.insert(node.id);
+    }
+  }
+
+  if (j.contains("junctionStart")) {
+    junctionStart = j["junctionStart"].get<Id>();
+  }
+  if (j.contains("junctionEnd")) {
+    junctionEnd = j["junctionEnd"].get<Id>();
+  }
+
+  // Import edges
+  if (j.contains("edges") && j["edges"].is_array()) {
+    for (const auto& edgeJson : j["edges"]) {
+      GraphEdge edge;
+      edge.fromNode = edgeJson["from"].get<Id>();
+      edge.toNode = edgeJson["to"].get<Id>();
+      edge.length = Meters(edgeJson["length"].get<double>());
+
+      // Import all features (all other fields in the edge object)
+      for (auto it = edgeJson.begin(); it != edgeJson.end(); ++it) {
+        const std::string& key = it.key();
+        // Skip the structural fields, only import feature fields
+        if (key != "from" && key != "to" && key != "length") {
+          edge.features[key] = it.value().get<double>();
+        }
+      }
+
+      edges.push_back(edge);
+    }
+  }
+}
+
 
 namespace GraphFeature {
 static const std::vector<std::string> wayTypes = {
@@ -240,54 +313,87 @@ GraphNode CreateGraphNode(const PostprocessorContext &context, const RouteDescri
   };
 }
 
-std::pair<GraphEdge, GraphEdge> MakeEdge(const PostprocessorContext& context,
-                                         const NodeIterator prev,
-                                         const NodeIterator from,
-                                         const NodeIterator to) {
-  GraphEdge edge{
-    context.GetNodeId(*from),
-    context.GetNodeId(*to),
-    GetSphericalDistance(from->GetLocation(), to->GetLocation())
-  };
-  edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
-  edge.features[GraphFeature::USABLE] = 1.0; // edge should be usable when it is part of the route
-  edge.features[GraphFeature::VIRTUAL] = 0.0; // edge is not virtual
-  if (from->GetPathObject().IsWay()) {
-    edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
-  }
+std::vector<GraphEdge> MakeLaneEdges(const PostprocessorContext& context,
+                                     const NodeIterator prev,
+                                     const NodeIterator from,
+                                     const NodeIterator to) {
+  std::vector<GraphEdge> edges;
+
+  Distance length = GetSphericalDistance(from->GetLocation(), to->GetLocation());
+  Id fromNodeId = context.GetNodeId(*from);
+  Id toNodeId = context.GetNodeId(*to);
+
+  // Calculate common features for all lane edges
+  double turnAngle = 0.0;
   if (prev != from) {
-    double inBearing=GetSphericalBearingFinal(prev->GetLocation(),from->GetLocation()).AsDegrees();
-    double outBearing=GetSphericalBearingInitial(from->GetLocation(),to->GetLocation()).AsDegrees();
+    double inBearing = GetSphericalBearingFinal(prev->GetLocation(), from->GetLocation()).AsDegrees();
+    double outBearing = GetSphericalBearingInitial(from->GetLocation(), to->GetLocation()).AsDegrees();
+    turnAngle = NormalizeRelativeAngle(outBearing - inBearing);
+  }
 
-    double turnAngle=NormalizeRelativeAngle(outBearing - inBearing);
+  double wayType = -1.0;
+  if (from->GetPathObject().IsWay()) {
+    wayType = GraphFeature::WayTypeId(context.GetWay(from->GetDBFileOffset())->GetType()->GetName());
+  }
+
+  // Get lane information
+  auto laneDesc = from->GetDescription<RouteDescription::LaneDescription>();
+  auto suggestedLanes = from->GetDescription<RouteDescription::SuggestedLaneDescription>();
+
+  int laneCount = 1; // Default to single lane
+  bool hasLaneInfo = false;
+
+  if (laneDesc && laneDesc->GetLaneCount() > 0) {
+    laneCount = laneDesc->GetLaneCount();
+    hasLaneInfo = true;
+  } else {
+    // Missing lane information - print warning
+    log.Warn() << "Missing lane information for way at node " << fromNodeId
+               << " (" << from->GetLocation().GetDisplayText() << "), assuming single lane";
+  }
+
+  // Create one edge per lane
+  for (int laneIndex = 0; laneIndex < laneCount; ++laneIndex) {
+    GraphEdge edge{fromNodeId, toNodeId, length};
+
+    // Set common features (same for all lanes from this highway)
+    edge.features[GraphFeature::LANE_COUNT] = static_cast<double>(laneCount);
     edge.features[GraphFeature::ANGLE] = turnAngle;
-  }
-  if (auto laneDesc = from->GetDescription<RouteDescription::LaneDescription>();
-      laneDesc && laneDesc->GetLaneCount() > 0) {
-    edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetLaneCount();
-    edge.features[GraphFeature::ONEWAY] = laneDesc->IsOneway() ? 1.0 : 0.0;
-    for (int i=0; i<laneDesc->GetLaneCount(); ++i) {
-      if (i < laneDesc->GetLaneTurns().size()) {
-        edge.features["laneTurn"+std::to_string(i)] = static_cast<double>(laneDesc->GetLaneTurns()[i]);
-      } else {
-        edge.features["laneTurn"+std::to_string(i)] = static_cast<double>(LaneTurn::Unknown);
-      }
+    edge.features[GraphFeature::ROUTE] = 1.0; // Mark this edge as part of the route
+    edge.features[GraphFeature::TYPE] = wayType;
+    edge.features[GraphFeature::USABLE] = 1.0; // edge should be usable when it is part of the route
+    edge.features[GraphFeature::VIRTUAL] = 0.0; // edge is not virtual
+
+    // Set lane-specific features
+    // Calculate relative lane position: 0.0 (leftmost) to 1.0 (rightmost)
+    edge.features[GraphFeature::RELATIVE_LANE_POSITION] =
+      (laneCount > 1) ? static_cast<double>(laneIndex) / static_cast<double>(laneCount - 1) : 0.0;
+
+    // Set lane turn direction
+    if (hasLaneInfo && laneIndex < laneDesc->GetLaneTurns().size()) {
+      edge.features[GraphFeature::LANE_TURN] = static_cast<double>(laneDesc->GetLaneTurns()[laneIndex]);
+    } else {
+      edge.features[GraphFeature::LANE_TURN] = static_cast<double>(LaneTurn::Unknown);
     }
-    if (auto suggestedLanes = from->GetDescription<RouteDescription::SuggestedLaneDescription>();
-        suggestedLanes) {
-      edge.features[GraphFeature::SUGGESTED_FROM] = static_cast<double>(suggestedLanes->GetFrom());
-      edge.features[GraphFeature::SUGGESTED_TO] = static_cast<double>(suggestedLanes->GetTo());
-      edge.features[GraphFeature::SUGGESTED_TURN] = static_cast<double>(suggestedLanes->GetTurn());
+
+    // Set suggested flag (binary: 1.0 if this lane is suggested, 0.0 otherwise)
+    bool isSuggested = false;
+    if (suggestedLanes) {
+      int suggestedFrom = suggestedLanes->GetFrom();
+      int suggestedTo = suggestedLanes->GetTo();
+      isSuggested = (laneIndex >= suggestedFrom && laneIndex <= suggestedTo);
     }
+    edge.features[GraphFeature::SUGGESTED] = isSuggested ? 1.0 : 0.0;
+
+    edges.push_back(edge);
   }
 
-  GraphEdge reverse{
-    context.GetNodeId(*to),
-    context.GetNodeId(*from),
-    edge.length
-  };
+  // Create one virtual reverse edge for the entire highway (not per lane)
+  GraphEdge reverse{toNodeId, fromNodeId, length};
   reverse.features[GraphFeature::VIRTUAL] = 1.0; // edge is virtual
-  return {edge, reverse};
+  edges.push_back(reverse);
+
+  return edges;
 }
 
 void TraverseWay(const PostprocessorContext &context,
@@ -302,7 +408,8 @@ void TraverseWay(const PostprocessorContext &context,
   assert(id < way->nodes.size());
   assert(id < std::numeric_limits<int64_t>::max());
 
-  auto laneDesc = context.GetLaneReader(dbId).GetValue(way->GetFeatureValueBuffer());
+  // auto laneDesc = context.GetLaneReader(dbId).GetValue(way->GetFeatureValueBuffer());
+  auto laneDesc = context.GetLanes(dbId, way, direction > 0);
   auto accessDesc = context.GetAccessReader(dbId).GetValue(way->GetFeatureValueBuffer());
 
   Distance distance;
@@ -315,48 +422,65 @@ void TraverseWay(const PostprocessorContext &context,
     graph.InsertNode(GraphNode{from.GetId(), from.GetCoord()});
     graph.InsertNode(GraphNode{to.GetId(), to.GetCoord()});
 
-    auto edge = GraphEdge{
-      from.GetId(),
-      to.GetId(),
-      GetSphericalDistance(from.GetCoord(), to.GetCoord())
-    };
-    edge.features[GraphFeature::VIRTUAL] = 0.0; // edge is not virtual
-    edge.features[GraphFeature::ROUTE] = 0.0; // this edge is the turn that is not part of the route
-    edge.features[GraphFeature::TYPE] = GraphFeature::WayTypeId(way->GetType()->GetName());
-    if (direction < 0){
-      edge.features[GraphFeature::USABLE] = context.CanUseBackward(dbId,
-                                                                   way->GetId(id),
-                                                                   way->GetObjectFileRef());
+    Distance length = GetSphericalDistance(from.GetCoord(), to.GetCoord());
+    double wayType = GraphFeature::WayTypeId(way->GetType()->GetName());
+
+    // Check if this edge is usable
+    double isUsable = 0.0;
+    if (direction < 0) {
+      isUsable = context.CanUseBackward(dbId, way->GetId(id), way->GetObjectFileRef());
     } else {
-      edge.features[GraphFeature::USABLE] = context.CanUseForward(dbId,
-                                                                  way->GetId(id),
-                                                                  way->GetObjectFileRef());
+      isUsable = context.CanUseForward(dbId, way->GetId(id), way->GetObjectFileRef());
     }
 
+    // Calculate turn angle
+    double turnAngle = 0.0;
     if (context.GetNodeId(*prev) != from.GetId()) {
       double inBearing = GetSphericalBearingFinal(prev->GetLocation(), from.GetCoord()).AsDegrees();
       double outBearing = GetSphericalBearingInitial(from.GetCoord(), to.GetCoord()).AsDegrees();
-      double turnAngle = NormalizeRelativeAngle(outBearing - inBearing);
-      edge.features[GraphFeature::ANGLE] = turnAngle;
+      turnAngle = NormalizeRelativeAngle(outBearing - inBearing);
     }
-    if (laneDesc) {
-      edge.features[GraphFeature::LANE_COUNT] = laneDesc->GetForwardLanes();
-      for (size_t j = 0; j < laneDesc->GetTurnForward().size(); ++j) {
-        edge.features["laneTurn" + std::to_string(j)] = static_cast<double>(laneDesc->GetTurnForward()[j]);
-      }
-    }
-    if (accessDesc) {
-      edge.features[GraphFeature::ONEWAY] = accessDesc->IsOneway() ? 1.0 : 0.0;
-    }
-    graph.edges.push_back(edge);
 
-    GraphEdge reverse{edge.toNode, edge.fromNode, edge.length};
-    reverse.features[GraphFeature::VIRTUAL] = 1.0; // edge is virtual
+    // Get lane information
+    int laneCount = laneDesc.GetLaneCount();
+    std::vector<LaneTurn> laneTurns = laneDesc.GetLaneTurns();
+
+    // Create one edge per lane
+    for (int laneIndex = 0; laneIndex < laneCount; ++laneIndex) {
+      GraphEdge edge{from.GetId(), to.GetId(), length};
+
+      // Set common features
+      edge.features[GraphFeature::VIRTUAL] = 0.0;
+      edge.features[GraphFeature::ROUTE] = 0.0; // this edge is not part of the route
+      edge.features[GraphFeature::TYPE] = wayType;
+      edge.features[GraphFeature::USABLE] = isUsable;
+      edge.features[GraphFeature::LANE_COUNT] = static_cast<double>(laneCount);
+      edge.features[GraphFeature::ANGLE] = turnAngle;
+
+      // Set lane-specific features
+      edge.features[GraphFeature::RELATIVE_LANE_POSITION] =
+        (laneCount > 1) ? static_cast<double>(laneIndex) / static_cast<double>(laneCount - 1) : 0.0;
+
+      if (laneIndex < laneTurns.size()) {
+        edge.features[GraphFeature::LANE_TURN] = static_cast<double>(laneTurns[laneIndex]);
+      } else {
+        edge.features[GraphFeature::LANE_TURN] = static_cast<double>(LaneTurn::Unknown);
+      }
+
+      // Not part of route, so never suggested
+      edge.features[GraphFeature::SUGGESTED] = 0.0;
+
+      graph.edges.push_back(edge);
+    }
+
+    // Create one virtual reverse edge for the entire highway
+    GraphEdge reverse{to.GetId(), from.GetId(), length};
+    reverse.features[GraphFeature::VIRTUAL] = 1.0;
     graph.edges.push_back(reverse);
 
-    distance += edge.length;
+    distance += length;
     if (distance > Meters(30)) {
-      break; // Stop if the distance exceeds 50 meters
+      break; // Stop if the distance exceeds 30 meters
     }
   }
 }
@@ -407,16 +531,18 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         // Create a graph node
         graph.InsertNode(CreateGraphNode(context, *toNode));
 
-        // Create an edge
-        auto [edge, reverse]=MakeEdge(context, prevNode, fromNode, toNode);
-        if (ahead) {
-          distanceAhead += edge.length;
+        // Create lane edges (one per lane + one virtual reverse)
+        auto laneEdges = MakeLaneEdges(context, prevNode, fromNode, toNode);
+        if (ahead && !laneEdges.empty()) {
+          distanceAhead += laneEdges[0].length;
         } else if (toNode == nodeIt) {
           ahead = true;
         }
 
-        graph.edges.push_back(edge);
-        graph.edges.push_back(reverse);
+        // Add all lane edges to the graph
+        for (auto& edge : laneEdges) {
+          graph.edges.push_back(edge);
+        }
 
         for (const auto nodeExitRef: fromNode->GetObjects()){
           if (!nodeExitRef.Valid() ||
@@ -444,6 +570,8 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         fromNode = toNode;
       }
       if (!graph.edges.empty()) {
+        graph.junctionStart = context.GetNodeId(*junctionStart);
+        graph.junctionEnd = context.GetNodeId(*fromNode);
         graph.Normalize();
         ProcessJunctionGraph(graph, node);
       }

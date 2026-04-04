@@ -18,87 +18,217 @@ from junction_ml.models import JunctionGNN
 logger = logging.getLogger(__name__)
 
 
-class MultiTaskLoss(nn.Module):
+class BinarySuggestedLoss(nn.Module):
     """
-    Multi-task loss function for junction lane prediction.
-    
-    Combines losses for suggestedFrom, suggestedTo, and suggestedTurn
-    with optional task weighting and uncertainty weighting.
+    Binary classification loss for lane suggestion prediction.
+
+    Uses weighted BCEWithLogitsLoss to handle class imbalance between
+    suggested and non-suggested lanes.
     """
     
-    def __init__(self, 
-                 task_weights: Optional[Dict[str, float]] = None,
-                 use_uncertainty_weighting: bool = False):
+    def __init__(self, pos_weight: float = 1.0):
         """
-        Initialize multi-task loss.
-        
+        Initialize binary loss.
+
         Args:
-            task_weights: Manual weights for each task
-            use_uncertainty_weighting: Whether to use learnable uncertainty weighting
+            pos_weight: Weight for positive class (suggested lanes) to handle imbalance
         """
         super().__init__()
         
-        self.task_weights = task_weights or {
-            'suggested_from': 1.0,
-            'suggested_to': 1.0,
-            'suggested_turn': 1.0
-        }
-        
-        self.use_uncertainty_weighting = use_uncertainty_weighting
-        
-        if use_uncertainty_weighting:
-            # Learnable uncertainty parameters (log variance)
-            self.log_vars = nn.Parameter(torch.zeros(3))
-        
-        self.mse_loss = nn.MSELoss(reduction='none')
-        
+        self.pos_weight = torch.tensor([pos_weight])
+        self.bce_loss = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight, reduction='none')
+
+        logger.info(f"Initialized BinarySuggestedLoss with pos_weight={pos_weight:.2f}")
+
     def forward(self, 
-                predictions: Dict[str, torch.Tensor], 
-                targets: Dict[str, torch.Tensor],
-                valid_masks: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+                predictions: torch.Tensor,
+                targets: torch.Tensor,
+                valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        Compute multi-task loss.
-        
+        Compute binary classification loss.
+
         Args:
-            predictions: Model predictions for each task
-            targets: Ground truth targets for each task
-            valid_masks: Masks indicating valid labels for each task
-            
+            predictions: Model predictions (logits) [num_edges]
+            targets: Ground truth binary labels [num_edges]
+            valid_mask: Optional mask indicating valid labels [num_edges]
+
         Returns:
-            Dictionary containing individual and total losses
+            Scalar loss value
         """
-        losses: dict[str, Any] = {}
-        total_loss = 0.0
-        
-        tasks = ['suggested_from', 'suggested_to', 'suggested_turn']
-        
-        for i, task in enumerate(tasks):
-            if task not in predictions or task not in targets:
-                continue
-                
-            pred = predictions[task]
-            target = targets[task]
-            valid = valid_masks.get(f'valid_{task.split("_")[1]}', torch.ones_like(target, dtype=torch.bool))
-            
-            if valid.sum() == 0:
-                losses[f'{task}_loss'] = torch.tensor(0.0, device=pred.device)
-                continue
-            
-            # Compute MSE loss only for valid labels
-            task_loss = self.mse_loss(pred[valid], target[valid]).mean()
-            
-            if self.use_uncertainty_weighting:
-                # Uncertainty weighting: loss = exp(-log_var) * loss + log_var
-                precision = torch.exp(-self.log_vars[i])
-                weighted_loss = precision * task_loss + self.log_vars[i]
-            else:
-                weighted_loss = self.task_weights[task] * task_loss
-            
-            losses[f'{task}_loss'] = task_loss
-            total_loss += weighted_loss
-        
-        losses['total_loss'] = total_loss
-        return losses
+        if valid_mask is None:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device)
+
+        # Move pos_weight to same device as predictions
+        if self.pos_weight.device != predictions.device:
+            self.pos_weight = self.pos_weight.to(predictions.device)
+            self.bce_loss.pos_weight = self.pos_weight
+
+        # Compute BCE loss only for valid edges
+        loss = self.bce_loss(predictions[valid_mask], targets[valid_mask])
+
+        result: torch.Tensor = loss.mean()
+        return result
+
+
+class FocalSuggestedLoss(nn.Module):
+    """
+    Focal loss for lane suggestion prediction.
+
+    Down-weights easy/confident examples so the model focuses on hard,
+    misclassified lanes. Particularly effective for the class imbalance
+    between suggested and non-suggested lanes.
+
+    Reference: Lin et al., "Focal Loss for Dense Object Detection", 2017.
+    """
+
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, pos_weight: float = 1.0):
+        """
+        Initialize focal loss.
+
+        Args:
+            alpha: Balancing factor for positive class (0-1). Higher values
+                   increase weight of positive (suggested) samples.
+            gamma: Focusing parameter. Higher values down-weight easy examples
+                   more aggressively. gamma=0 reduces to standard BCE.
+            pos_weight: Additional positive class weight (applied on top of alpha).
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.pos_weight = pos_weight
+
+        logger.info(
+            f"Initialized FocalSuggestedLoss with alpha={alpha:.2f}, "
+            f"gamma={gamma:.2f}, pos_weight={pos_weight:.2f}"
+        )
+
+    def forward(self,
+                predictions: torch.Tensor,
+                targets: torch.Tensor,
+                valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Compute focal loss.
+
+        Args:
+            predictions: Model predictions (logits) [num_edges]
+            targets: Ground truth binary labels [num_edges]
+            valid_mask: Optional mask indicating valid labels [num_edges]
+
+        Returns:
+            Scalar loss value
+        """
+        if valid_mask is None:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device)
+
+        logits = predictions[valid_mask]
+        labels = targets[valid_mask]
+
+        # Compute probabilities via sigmoid
+        p = torch.sigmoid(logits)
+        # p_t = p for positive samples, (1-p) for negative samples
+        p_t = p * labels + (1.0 - p) * (1.0 - labels)
+
+        # Focal modulating factor: (1 - p_t)^gamma
+        focal_weight = (1.0 - p_t) ** self.gamma
+
+        # Alpha balancing: alpha for positives, (1-alpha) for negatives
+        alpha_weight = self.alpha * labels + (1.0 - self.alpha) * (1.0 - labels)
+
+        # Apply pos_weight as additional scaling for positives
+        class_weight = self.pos_weight * labels + 1.0 * (1.0 - labels)
+
+        # Standard BCE per element (no reduction)
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, labels, reduction='none'
+        )
+
+        loss = focal_weight * alpha_weight * class_weight * bce
+
+        result: torch.Tensor = loss.mean()
+        return result
+
+
+class DiceSuggestedLoss(nn.Module):
+    """
+    Soft Dice loss for lane suggestion prediction.
+
+    Directly optimizes the overlap (Dice/F1 coefficient) between predicted
+    and target sets. Naturally handles class imbalance because a single
+    correct positive matters a lot when positives are rare.
+
+    Optionally combined with BCE for gradient stability (``bce_weight > 0``).
+    """
+
+    def __init__(self, smooth: float = 1.0, bce_weight: float = 0.5, pos_weight: float = 1.0):
+        """
+        Initialize Dice loss.
+
+        Args:
+            smooth: Smoothing constant to avoid division by zero and stabilize
+                    gradients when both prediction and target are near-empty.
+            bce_weight: Weight of an auxiliary BCE term added to the Dice loss
+                        for gradient stability.  0 = pure Dice, 1 = equal mix.
+            pos_weight: Positive-class weight forwarded to the auxiliary BCE term.
+        """
+        super().__init__()
+        self.smooth = smooth
+        self.bce_weight = bce_weight
+        self.pos_weight = pos_weight
+
+        logger.info(
+            f"Initialized DiceSuggestedLoss with smooth={smooth:.2f}, "
+            f"bce_weight={bce_weight:.2f}, pos_weight={pos_weight:.2f}"
+        )
+
+    def forward(self,
+                predictions: torch.Tensor,
+                targets: torch.Tensor,
+                valid_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Compute Dice loss (optionally combined with BCE).
+
+        Args:
+            predictions: Model predictions (logits) [num_edges]
+            targets: Ground truth binary labels [num_edges]
+            valid_mask: Optional mask indicating valid labels [num_edges]
+
+        Returns:
+            Scalar loss value
+        """
+        if valid_mask is None:
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+
+        if valid_mask.sum() == 0:
+            return torch.tensor(0.0, device=predictions.device)
+
+        logits = predictions[valid_mask]
+        labels = targets[valid_mask]
+
+        # Soft predictions via sigmoid
+        probs = torch.sigmoid(logits)
+
+        # Soft Dice coefficient: 2 * |P ∩ T| / (|P| + |T|)
+        intersection = (probs * labels).sum()
+        dice_coeff = (2.0 * intersection + self.smooth) / (probs.sum() + labels.sum() + self.smooth)
+        dice_loss = 1.0 - dice_coeff
+
+        if self.bce_weight > 0.0:
+            # Auxiliary weighted BCE for gradient stability
+            weight = torch.where(labels == 1.0, self.pos_weight, 1.0)
+            bce = nn.functional.binary_cross_entropy_with_logits(
+                logits, labels, weight=weight, reduction='mean'
+            )
+            result: torch.Tensor = dice_loss + self.bce_weight * bce
+        else:
+            result = dice_loss
+
+        return result
 
 
 class JunctionTrainer:
@@ -111,7 +241,7 @@ class JunctionTrainer:
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  optimizer: optim.Optimizer,
-                 criterion: MultiTaskLoss,
+                 criterion: nn.Module,
                  device: torch.device,
                  log_dir: str = 'runs',
                  save_dir: str = 'checkpoints',
@@ -158,9 +288,10 @@ class JunctionTrainer:
     def train_epoch(self) -> Dict[str, float]:
         """Train for one epoch."""
         self.model.train()
-        epoch_losses: dict[str, list[Any]] = {'total_loss': [], 'suggested_from_loss': [],
-                                              'suggested_to_loss': [], 'suggested_turn_loss': []}
-        
+        epoch_losses: list[float] = []
+        all_preds: list[float] = []
+        all_targets: list[float] = []
+
         pbar = tqdm(self.train_loader, desc=f'Epoch {self.epoch} [Train]')
         
         for batch in pbar:
@@ -169,52 +300,53 @@ class JunctionTrainer:
             self.optimizer.zero_grad()
             
             # Forward pass
-            predictions = self.model(batch)
-            
-            # Prepare targets and masks
-            targets = {
-                'suggested_from': batch.y_suggested_from,
-                'suggested_to': batch.y_suggested_to,
-                'suggested_turn': batch.y_suggested_turn
-            }
-            
-            valid_masks = {
-                'valid_from': batch.valid_from,
-                'valid_to': batch.valid_to,
-                'valid_turn': batch.valid_turn
-            }
-            
+            predictions = self.model(batch)  # [num_edges] logits
+
+            # Get targets and valid mask
+            targets = batch.y_suggested
+            valid_mask = batch.valid_suggested
+
             # Compute loss
-            losses = self.criterion(predictions, targets, valid_masks)
-            
+            loss = self.criterion(predictions, targets, valid_mask)
+
             # Backward pass
-            losses['total_loss'].backward()
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             
-            # Log losses
-            for key, value in losses.items():
-                if key in epoch_losses:
-                    epoch_losses[key].append(value.item())
-            
+            # Log losses and predictions
+            epoch_losses.append(loss.item())
+
+            # Collect predictions for metrics (apply sigmoid)
+            with torch.no_grad():
+                pred_probs = torch.sigmoid(predictions[valid_mask])
+                all_preds.extend(pred_probs.cpu().numpy().tolist())
+                all_targets.extend(targets[valid_mask].cpu().numpy().tolist())
+
             # Update progress bar
-            pbar.set_postfix({
-                'loss': f"{losses['total_loss'].item():.4f}",
-                'from': f"{losses.get('suggested_from_loss', torch.tensor(0)).item():.4f}",
-                'to': f"{losses.get('suggested_to_loss', torch.tensor(0)).item():.4f}",
-                'turn': f"{losses.get('suggested_turn_loss', torch.tensor(0)).item():.4f}"
-            })
-        
-        # Average losses
-        avg_losses = {key: np.mean(values) for key, values in epoch_losses.items() if values}
-        return avg_losses
-    
+            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+
+        # Calculate metrics
+        avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+        all_preds_np = np.array(all_preds)
+        all_targets_np = np.array(all_targets)
+
+        # Binary accuracy
+        pred_binary = (all_preds_np > 0.5).astype(int)
+        accuracy = float((pred_binary == all_targets_np).mean()) if len(all_targets_np) > 0 else 0.0
+
+        return {
+            'loss': avg_loss,
+            'accuracy': accuracy
+        }
+
     def validate_epoch(self) -> Dict[str, float]:
         """Validate for one epoch."""
         self.model.eval()
-        epoch_losses: dict[str, list[Any]] = {'total_loss': [], 'suggested_from_loss': [],
-                                              'suggested_to_loss': [], 'suggested_turn_loss': []}
-        
+        epoch_losses: list[float] = []
+        all_preds: list[float] = []
+        all_targets: list[float] = []
+
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f'Epoch {self.epoch} [Val]')
             
@@ -222,41 +354,55 @@ class JunctionTrainer:
                 batch = batch.to(self.device)
                 
                 # Forward pass
-                predictions = self.model(batch)
-                
-                # Prepare targets and masks
-                targets = {
-                    'suggested_from': batch.y_suggested_from,
-                    'suggested_to': batch.y_suggested_to,
-                    'suggested_turn': batch.y_suggested_turn
-                }
-                
-                valid_masks = {
-                    'valid_from': batch.valid_from,
-                    'valid_to': batch.valid_to,
-                    'valid_turn': batch.valid_turn
-                }
-                
+                predictions = self.model(batch)  # [num_edges] logits
+
+                # Get targets and valid mask
+                targets = batch.y_suggested
+                valid_mask = batch.valid_suggested
+
                 # Compute loss
-                losses = self.criterion(predictions, targets, valid_masks)
-                
-                # Log losses
-                for key, value in losses.items():
-                    if key in epoch_losses:
-                        epoch_losses[key].append(value.item())
-                
+                loss = self.criterion(predictions, targets, valid_mask)
+
+                # Log losses and predictions
+                epoch_losses.append(loss.item())
+
+                # Collect predictions for metrics
+                pred_probs = torch.sigmoid(predictions[valid_mask])
+                all_preds.extend(pred_probs.cpu().numpy().tolist())
+                all_targets.extend(targets[valid_mask].cpu().numpy().tolist())
+
                 # Update progress bar
-                pbar.set_postfix({
-                    'loss': f"{losses['total_loss'].item():.4f}",
-                    'from': f"{losses.get('suggested_from_loss', torch.tensor(0)).item():.4f}",
-                    'to': f"{losses.get('suggested_to_loss', torch.tensor(0)).item():.4f}",
-                    'turn': f"{losses.get('suggested_turn_loss', torch.tensor(0)).item():.4f}"
-                })
-        
-        # Average losses
-        avg_losses = {key: np.mean(values) for key, values in epoch_losses.items() if values}
-        return avg_losses
-    
+                pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+
+        # Calculate metrics
+        avg_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+        all_preds_np = np.array(all_preds)
+        all_targets_np = np.array(all_targets)
+
+        # Binary accuracy
+        pred_binary = (all_preds_np > 0.5).astype(int)
+        accuracy = float((pred_binary == all_targets_np).mean()) if len(all_targets_np) > 0 else 0.0
+
+        # Precision, recall, F1 for positive class (suggested lanes)
+        from sklearn.metrics import precision_recall_fscore_support  # type: ignore[import-untyped]
+        if len(all_targets_np) > 0:
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                all_targets_np, pred_binary, average='binary', zero_division=0
+            )
+            precision = float(precision)
+            recall = float(recall)
+            f1 = float(f1)
+        else:
+            precision, recall, f1 = 0.0, 0.0, 0.0
+
+        return {
+            'loss': avg_loss,
+            'accuracy': accuracy,
+            'precision': precision,
+            'recall': recall,
+            'f1': f1
+        }
+
     def save_checkpoint(self, is_best: bool = False) -> None:
         """Save model checkpoint."""
         checkpoint = {
@@ -391,7 +537,7 @@ class JunctionTrainer:
                 self.writer.add_scalar(f'Validation/{key}', value, epoch)
             
             # Check for improvement
-            current_val_loss = val_losses['total_loss']
+            current_val_loss = val_losses['loss']
             is_best = current_val_loss < self.best_val_loss
             
             if is_best:
@@ -411,8 +557,10 @@ class JunctionTrainer:
             # Log epoch summary
             logger.info(
                 f"Epoch {epoch}: "
-                f"Train Loss: {train_losses['total_loss']:.4f}, "
+                f"Train Loss: {train_losses['loss']:.4f}, "
+                f"Train Acc: {train_losses.get('accuracy', 0):.4f}, "
                 f"Val Loss: {current_val_loss:.4f}, "
+                f"Val F1: {val_losses.get('f1', 0):.4f}, "
                 f"Best Val Loss: {self.best_val_loss:.4f}"
             )
         
@@ -425,8 +573,13 @@ def create_trainer(model: JunctionGNN,
                    val_loader: DataLoader,
                    learning_rate: float = 1e-3,
                    weight_decay: float = 1e-5,
-                   task_weights: Optional[Dict[str, float]] = None,
+                   pos_weight: Optional[float] = None,
                    device: Optional[torch.device] = None,
+                   loss_type: str = "bce",
+                   focal_alpha: float = 0.25,
+                   focal_gamma: float = 2.0,
+                   dice_smooth: float = 1.0,
+                   dice_bce_weight: float = 0.5,
                    **trainer_kwargs: Any) -> JunctionTrainer:
     """
     Create a trainer instance with default configurations.
@@ -437,8 +590,13 @@ def create_trainer(model: JunctionGNN,
         val_loader: Validation data loader
         learning_rate: Learning rate for optimizer
         weight_decay: Weight decay for optimizer
-        task_weights: Weights for multi-task loss
+        pos_weight: Weight for positive class in BCE loss (for class imbalance)
         device: Device to train on
+        loss_type: Loss function to use: "bce" (default), "focal", or "dice"
+        focal_alpha: Alpha parameter for focal loss (balancing factor, 0-1)
+        focal_gamma: Gamma parameter for focal loss (focusing parameter, >=0)
+        dice_smooth: Smoothing constant for Dice loss
+        dice_bce_weight: Weight of auxiliary BCE term in Dice loss (0 = pure Dice)
         **trainer_kwargs: Additional arguments for trainer
         
     Returns:
@@ -452,9 +610,29 @@ def create_trainer(model: JunctionGNN,
     # Create optimizer
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     
-    # Create loss function
-    criterion = MultiTaskLoss(task_weights=task_weights)
-    
+    # Create loss function with pos_weight for handling class imbalance
+    if pos_weight is None:
+        pos_weight = 1.0
+        logger.warning("pos_weight not provided, using default value of 1.0")
+
+    criterion: nn.Module
+    if loss_type == "focal":
+        criterion = FocalSuggestedLoss(
+            alpha=focal_alpha,
+            gamma=focal_gamma,
+            pos_weight=pos_weight,
+        )
+    elif loss_type == "dice":
+        criterion = DiceSuggestedLoss(
+            smooth=dice_smooth,
+            bce_weight=dice_bce_weight,
+            pos_weight=pos_weight,
+        )
+    elif loss_type == "bce":
+        criterion = BinarySuggestedLoss(pos_weight=pos_weight)
+    else:
+        raise ValueError(f"Unknown loss_type '{loss_type}'. Expected 'bce', 'focal', or 'dice'.")
+
     # Create trainer
     trainer = JunctionTrainer(
         model=model,

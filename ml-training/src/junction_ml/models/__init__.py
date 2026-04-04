@@ -84,12 +84,10 @@ class JunctionGNN(nn.Module):
             nn.Dropout(dropout)
         )
         
-        # Multi-task prediction heads
-        self.suggested_from_head = nn.Linear(hidden_dim // 2, 1)
-        self.suggested_to_head = nn.Linear(hidden_dim // 2, 1)
-        self.suggested_turn_head = nn.Linear(hidden_dim // 2, 1)
-        
-    def forward(self, data: Data) -> Dict[str, torch.Tensor]:
+        # Binary classification head: is this lane suggested?
+        self.suggested_head = nn.Linear(hidden_dim // 2, 1)
+
+    def forward(self, data: Data) -> torch.Tensor:
         """
         Forward pass of the model.
         
@@ -97,7 +95,7 @@ class JunctionGNN(nn.Module):
             data: PyTorch Geometric Data object
             
         Returns:
-            Dictionary with predictions for each task
+            Binary predictions for each edge (suggested or not)
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         batch = getattr(data, 'batch', None)
@@ -127,7 +125,7 @@ class JunctionGNN(nn.Module):
     def _predict_edges(self, 
                       node_embeddings: torch.Tensor, 
                       edge_index: torch.Tensor,
-                      edge_embeddings: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+                      edge_embeddings: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Predict edge-level outputs.
         
@@ -137,7 +135,7 @@ class JunctionGNN(nn.Module):
             edge_embeddings: Optional edge embeddings [num_edges, hidden_dim]
             
         Returns:
-            Dictionary with edge predictions
+            Binary predictions for each edge [num_edges]
         """
         row, col = edge_index
         
@@ -151,16 +149,10 @@ class JunctionGNN(nn.Module):
         # Edge prediction
         edge_repr = self.edge_predictor(edge_features)
         
-        # Multi-task predictions
-        suggested_from = self.suggested_from_head(edge_repr).squeeze(-1)
-        suggested_to = self.suggested_to_head(edge_repr).squeeze(-1)
-        suggested_turn = self.suggested_turn_head(edge_repr).squeeze(-1)
-        
-        return {
-            'suggested_from': suggested_from,
-            'suggested_to': suggested_to,
-            'suggested_turn': suggested_turn
-        }
+        # Binary classification: is this lane suggested?
+        suggested: torch.Tensor = self.suggested_head(edge_repr).squeeze(-1)
+
+        return suggested
 
 
 class JunctionTransformer(nn.Module):
@@ -302,7 +294,7 @@ class JunctionGNNTorchScript(nn.Module):
     def forward(self,
                 node_features: torch.Tensor,
                 edge_index: torch.Tensor,
-                edge_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                edge_features: torch.Tensor) -> torch.Tensor:
         """
         TorchScript-compatible forward pass.
 
@@ -312,7 +304,7 @@ class JunctionGNNTorchScript(nn.Module):
             edge_features: Edge features tensor [num_edges, edge_features]
 
         Returns:
-            Tuple of (suggested_from, suggested_to, suggested_turn) predictions
+            Binary predictions for each edge [num_edges]
         """
         x = node_features
 
@@ -347,9 +339,7 @@ class JunctionGNNTorchScript(nn.Module):
         # Edge prediction
         edge_repr = self.gnn.edge_predictor(edge_features_concat)
 
-        # Multi-task predictions
-        suggested_from = self.gnn.suggested_from_head(edge_repr).squeeze(-1)
-        suggested_to = self.gnn.suggested_to_head(edge_repr).squeeze(-1)
-        suggested_turn = self.gnn.suggested_turn_head(edge_repr).squeeze(-1)
+        # Binary classification: is this lane suggested?
+        suggested: torch.Tensor = self.gnn.suggested_head(edge_repr).squeeze(-1)
 
-        return suggested_from, suggested_to, suggested_turn
+        return suggested
