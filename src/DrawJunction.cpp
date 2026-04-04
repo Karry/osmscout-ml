@@ -161,12 +161,27 @@ void DrawJunctionOverlay(QPainter& painter,
   }
 
   // Draw node markers
-  painter.setPen(Qt::NoPen);
-  painter.setBrush(QColor(50, 50, 50, 200));
   for (const auto& node : graph.nodes) {
     osmscout::Vertex2D pixel;
-    if (projection.GeoToPixel(node.location, pixel)) {
-      painter.drawEllipse(QPointF(pixel.GetX(), pixel.GetY()), 3.0, 3.0);
+    if (!projection.GeoToPixel(node.location, pixel)) {
+      continue;
+    }
+    QPointF pos(pixel.GetX(), pixel.GetY());
+
+    if (graph.junctionStart && node.id == *graph.junctionStart) {
+      // Junction entry: green dot
+      painter.setPen(QPen(QColor(0, 0, 0), 1.5));
+      painter.setBrush(QColor(0, 200, 0, 220));
+      painter.drawEllipse(pos, 6.0, 6.0);
+    } else if (graph.junctionEnd && node.id == *graph.junctionEnd) {
+      // Junction exit: red dot
+      painter.setPen(QPen(QColor(0, 0, 0), 1.5));
+      painter.setBrush(QColor(200, 0, 0, 220));
+      painter.drawEllipse(pos, 6.0, 6.0);
+    } else {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(50, 50, 50, 200));
+      painter.drawEllipse(pos, 3.0, 3.0);
     }
   }
 
@@ -190,6 +205,10 @@ void DrawJunctionOverlay(QPainter& painter,
   } else {
     drawLegendEntry(QColor(0, 200, 0, 180), "Predicted");
     drawLegendEntry(QColor(200, 0, 0, 180), "Not predicted");
+  }
+  if (graph.junctionStart || graph.junctionEnd) {
+    drawLegendEntry(QColor(0, 200, 0, 220), "Junction entry");
+    drawLegendEntry(QColor(200, 0, 0, 220), "Junction exit");
   }
 }
 

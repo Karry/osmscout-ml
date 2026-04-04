@@ -147,6 +147,13 @@ void Graph::Export(const std::filesystem::path &filePath) const {
       {"outgoing", node.outgoing}
     });
   }
+  if (junctionStart) {
+    j["junctionStart"] = *junctionStart;
+  }
+  if (junctionEnd) {
+    j["junctionEnd"] = *junctionEnd;
+  }
+
   // Export edges
   j["edges"] = nlohmann::json::array();
   for (const auto& edge : edges) {
@@ -198,6 +205,13 @@ void Graph::Import(const std::filesystem::path &filePath) {
       nodes.push_back(node);
       nodeIdSet.insert(node.id);
     }
+  }
+
+  if (j.contains("junctionStart")) {
+    junctionStart = j["junctionStart"].get<Id>();
+  }
+  if (j.contains("junctionEnd")) {
+    junctionEnd = j["junctionEnd"].get<Id>();
   }
 
   // Import edges
@@ -556,6 +570,8 @@ bool JunctionGraphProcessor::Process(const PostprocessorContext& context,
         fromNode = toNode;
       }
       if (!graph.edges.empty()) {
+        graph.junctionStart = context.GetNodeId(*junctionStart);
+        graph.junctionEnd = context.GetNodeId(*fromNode);
         graph.Normalize();
         ProcessJunctionGraph(graph, node);
       }

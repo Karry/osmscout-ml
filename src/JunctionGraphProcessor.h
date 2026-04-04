@@ -20,6 +20,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 
 #include <osmscout/routing/RoutePostprocessor.h>
 
@@ -67,6 +68,9 @@ struct Graph {
   std::vector<GraphEdge> edges;
 
   std::set<Id> nodeIdSet;
+
+  std::optional<Id> junctionStart; // node where the car enters the junction
+  std::optional<Id> junctionEnd;   // node where the car leaves the junction
 
   void Export(const std::filesystem::path &filePath) const;
   void Import(const std::filesystem::path &filePath);
